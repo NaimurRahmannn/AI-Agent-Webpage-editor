@@ -4,6 +4,7 @@ import sys
 from collections.abc import Mapping
 
 from web.settings import Settings, resolve_allowed_paths
+from web.state import SessionState
 
 
 EXIT_COMMANDS = {"exit", "quit"}
@@ -51,7 +52,11 @@ def read_current_sources(settings: Settings) -> Mapping[str, str]:
 def print_banner(settings: Settings) -> None:
     """Print safe startup information without exposing secrets."""
 
-    groq_status = "configured" if settings.llm_is_configured else "not configured"
+    groq_status = (
+        "configured"
+        if settings.llm_is_configured
+        else "not configured"
+    )
     model_name = settings.groq_model or "not set"
 
     print()
@@ -61,8 +66,12 @@ def print_banner(settings: Settings) -> None:
     print(f"Allowed files: {', '.join(settings.allowed_files)}")
     print(f"Groq: {groq_status}")
     print(f"Model: {model_name}")
+    print(
+        "Session memory limit: "
+        f"{settings.session_history_limit} successful turns"
+    )
     print()
-    print("Phase 1 mode: read-only session shell")
+    print("Phase 2 mode: structured models and bounded memory")
     print("Type an editing instruction, or type 'exit' or 'quit'.")
     print()
 
@@ -71,9 +80,13 @@ def run_session(settings: Settings) -> None:
     """
     Run the long-lived terminal session.
 
-    Phase 1 only reads the current files. It does not invoke CrewAI,
-    construct a patch, create a backup, or modify source files.
+    Phase 2 reads current files and prepares bounded conversational
+    context. It does not invoke CrewAI or modify source files.
     """
+
+    session_state = SessionState(
+        history_limit=settings.session_history_limit
+    )
 
     print_banner(settings)
 
@@ -85,7 +98,10 @@ def run_session(settings: Settings) -> None:
             return
         except KeyboardInterrupt:
             print()
-            print("Instruction cancelled. Type 'exit' to close the session.")
+            print(
+                "Instruction cancelled. "
+                "Type 'exit' to close the session."
+            )
             continue
 
         if not instruction:
@@ -98,18 +114,31 @@ def run_session(settings: Settings) -> None:
         try:
             sources = read_current_sources(settings)
         except (SourceReadError, ValueError) as exc:
-            print(f"Source read failed: {exc}", file=sys.stderr)
+            print(
+                f"Source read failed: {exc}",
+                file=sys.stderr,
+            )
             print("No files were changed.")
             print()
             continue
 
-        total_characters = sum(len(content) for content in sources.values())
+        memory_context = session_state.build_context()
+
+        total_characters = sum(
+            len(content) for content in sources.values()
+        )
 
         print(
             f"Reread {len(sources)} configured file(s) "
             f"from disk ({total_characters} characters)."
         )
         print(f"Instruction received: {instruction}")
+        print(
+            "Prepared bounded session context "
+            f"({len(memory_context)} characters, "
+            f"{session_state.successful_turn_count} "
+            "successful turns)."
+        )
         print("Agent interpretation will be added in Phase 4.")
         print("No files were changed.")
         print()
