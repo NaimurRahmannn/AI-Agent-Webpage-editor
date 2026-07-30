@@ -19,7 +19,9 @@ from web.settings import Settings
 from web.state import SessionState
 from web.tools.patcher import (
     PatchApplicationResult,
-    apply_patch,
+    PreparedPatch,
+    commit_prepared_patch,
+    prepare_patch,
 )
 
 
@@ -75,6 +77,7 @@ class TurnResult:
 
     status: Literal[
         "applied",
+        "preview_ready",
         "ambiguous",
         "unsupported",
         "needs_clarification",
@@ -86,6 +89,7 @@ class TurnResult:
     backup_file: str | None = None
     diff: str | None = None
     clarification_request: ClarificationRequest | None = None
+    prepared_patch: PreparedPatch | None = None
 
 
 def execute_crew(
@@ -289,12 +293,13 @@ def process_turn(
     instruction: str,
     sources: Mapping[str, str],
     crew_executor: CrewExecutor = execute_crew,
-    patch_applier: PatchApplier = apply_patch,
 ) -> TurnResult:
     """
     Execute one complete conversational editing turn.
 
-    Memory is committed only after the deterministic patcher succeeds.
+    In automatic mode, patches are validated and committed immediately.
+    In preview mode, patches are validated and returned as preview_ready.
+    Memory is committed only after the deterministic patcher succeeds on disk.
     """
 
     inputs = build_crew_inputs(
@@ -350,11 +355,22 @@ def process_turn(
             "ready patch refers to a file absent from the current source snapshot"
         )
 
-    application = patch_applier(
-        settings,
-        patch,
+    prepared = prepare_patch(
+        settings=settings,
+        patch=patch,
         expected_source_text=sources[patch.file],
     )
+
+    if settings.patch_mode == "preview":
+        return TurnResult(
+            status="preview_ready",
+            summary=prepared.summary,
+            file=prepared.file,
+            diff=prepared.diff,
+            prepared_patch=prepared,
+        )
+
+    application = commit_prepared_patch(settings, prepared)
 
     session_state.record_success(
         instruction,
@@ -367,4 +383,5 @@ def process_turn(
         file=application.file,
         backup_file=application.backup_file,
         diff=application.diff,
+        prepared_patch=prepared,
     )
