@@ -12,6 +12,7 @@ from web.crew import (
 from web.models import LocatorResult, ProposedPatch
 from web.reliability import (
     CrewFailureDetails,
+    CrewFailureKind,
     classify_crew_exception,
 )
 from web.settings import Settings
@@ -31,8 +32,15 @@ class CrewExecutionError(TurnError):
 
     def __init__(
         self,
-        failure: CrewFailureDetails,
+        failure: CrewFailureDetails | str,
     ) -> None:
+        if isinstance(failure, str):
+            failure = CrewFailureDetails(
+                kind=CrewFailureKind.PROVIDER,
+                message=failure,
+                retryable=True,
+            )
+
         self.failure = failure
         super().__init__(failure.message)
 

@@ -355,7 +355,8 @@ class SessionState:
         lines.extend(
             [
                 "",
-                "Recent successful turns, newest first:",
+                "Recent successful turns:",
+                "- newest first",
             ]
         )
 

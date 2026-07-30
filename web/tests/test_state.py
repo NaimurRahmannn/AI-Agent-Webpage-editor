@@ -5,6 +5,7 @@ from web.state import (
     MAX_CONTEXT_CHARS,
     MAX_INSTRUCTION_CHARS,
     SessionState,
+    instruction_looks_like_follow_up,
 )
 
 
@@ -199,3 +200,98 @@ def test_rendered_context_has_absolute_character_limit() -> None:
     context = state.build_context()
 
     assert len(context) <= MAX_CONTEXT_CHARS
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "Make it darker.",
+        "Round that more.",
+        "Change the same one again.",
+        "Even smaller.",
+        "Rounder please.",
+    ],
+)
+def test_detects_likely_follow_up(
+    instruction,
+) -> None:
+    assert instruction_looks_like_follow_up(
+        instruction
+    )
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "Change the main heading.",
+        "Make the CTA button darker.",
+        "Set the feature cards to two columns.",
+    ],
+)
+def test_does_not_mark_specific_request_as_follow_up(
+    instruction,
+) -> None:
+    assert not instruction_looks_like_follow_up(
+        instruction
+    )
+
+
+def test_follow_up_context_uses_last_target() -> None:
+    state = SessionState(history_limit=3)
+
+    state.record_success(
+        "Make the button green.",
+        make_ready_patch(),
+    )
+
+    context = state.build_context(
+        instruction="Make it darker."
+    )
+
+    assert "likely follow-up: yes" in context
+    assert "consider the last successful target" in context
+    assert "file: style.css" in context
+    assert "selector: .cta" in context
+
+
+def test_unresolved_follow_up_has_ambiguity_guidance() -> None:
+    state = SessionState(history_limit=3)
+
+    context = state.build_context(
+        instruction="Make it darker."
+    )
+
+    assert "likely follow-up: yes" in context
+    assert "no successful target exists" in context
+    assert "ambiguous" in context
+
+
+def test_successful_turns_are_rendered_newest_first() -> None:
+    state = SessionState(history_limit=3)
+
+    state.record_success(
+        "First instruction",
+        make_ready_patch(
+            target="first target",
+            summary="First summary.",
+        ),
+    )
+    state.record_success(
+        "Second instruction",
+        make_ready_patch(
+            target="second target",
+            summary="Second summary.",
+        ),
+    )
+
+    context = state.build_context()
+
+    second_position = context.index(
+        "instruction: Second instruction"
+    )
+    first_position = context.index(
+        "instruction: First instruction"
+    )
+
+    assert second_position < first_position
+    assert "most recent successful turn" in context

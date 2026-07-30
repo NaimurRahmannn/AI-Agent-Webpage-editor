@@ -13,6 +13,7 @@ from web.orchestration import (
     process_turn,
     validate_crew_output,
 )
+from web.reliability import CrewFailureKind
 from web.settings import Settings
 from web.state import SessionState
 from web.tools.patcher import (
@@ -222,18 +223,19 @@ def test_rejected_turn_does_not_call_patcher(
     assert not list(tmp_path.glob("*.bak*"))
 
 
-def test_crew_exception_is_wrapped_and_no_patch_runs(
+def test_crew_exception_is_safely_classified(
     tmp_path,
 ) -> None:
     state = SessionState(history_limit=3)
 
     def failing_executor(settings, inputs):
-        raise RuntimeError("provider failed")
+        raise TimeoutError(
+            "request timed out with secret request data"
+        )
 
     with pytest.raises(
         CrewExecutionError,
-        match="RuntimeError",
-    ):
+    ) as captured:
         process_turn(
             settings=make_settings(tmp_path),
             session_state=state,
@@ -244,6 +246,14 @@ def test_crew_exception_is_wrapped_and_no_patch_runs(
             },
             crew_executor=failing_executor,
         )
+
+    failure = captured.value.failure
+
+    assert failure.kind is CrewFailureKind.TIMEOUT
+    assert failure.retryable is True
+    assert "secret request data" not in str(
+        captured.value
+    )
 
     assert state.successful_turn_count == 0
     assert not list(tmp_path.glob("*.bak*"))
@@ -482,3 +492,243 @@ def test_patcher_failure_does_not_update_memory(
 
     assert state.successful_turn_count == 0
     assert state.last_target is None
+
+
+def test_ready_patch_selector_must_match_locator() -> None:
+    locator = LocatorResult(
+        status="located",
+        file="style.css",
+        target="CTA background",
+        selector=".cta",
+        property="background",
+        exact_source="background: green;",
+        message="Located the CTA background.",
+    )
+
+    patch = ProposedPatch(
+        status="ready",
+        file="style.css",
+        old_text="background: green;",
+        new_text="background: darkgreen;",
+        target="CTA background",
+        selector=".other",
+        property="background",
+        summary="Darken the CTA.",
+    )
+
+    output = FakeCrewOutput(
+        pydantic=patch,
+        tasks_output=[
+            FakeTaskOutput(locator),
+            FakeTaskOutput(patch),
+        ],
+    )
+
+    with pytest.raises(
+        CrewOutputError,
+        match="selector does not match",
+    ):
+        validate_crew_output(output)
+
+
+def test_ready_patch_property_must_match_locator() -> None:
+    locator = LocatorResult(
+        status="located",
+        file="style.css",
+        target="CTA background",
+        selector=".cta",
+        property="background",
+        exact_source="background: green;",
+        message="Located the CTA background.",
+    )
+
+    patch = ProposedPatch(
+        status="ready",
+        file="style.css",
+        old_text="background: green;",
+        new_text="background: darkgreen;",
+        target="CTA background",
+        selector=".cta",
+        property="color",
+        summary="Darken the CTA.",
+    )
+
+    output = FakeCrewOutput(
+        pydantic=patch,
+        tasks_output=[
+            FakeTaskOutput(locator),
+            FakeTaskOutput(patch),
+        ],
+    )
+
+    with pytest.raises(
+        CrewOutputError,
+        match="property does not match",
+    ):
+        validate_crew_output(output)
+
+
+def test_rejected_locator_cannot_include_source_data() -> None:
+    locator = LocatorResult(
+        status="ambiguous",
+        file="style.css",
+        exact_source="color: red;",
+        message="More than one target matches.",
+    )
+
+    patch = ProposedPatch(
+        status="ambiguous",
+        summary="The request is ambiguous.",
+        message="More than one target matches.",
+    )
+
+    output = FakeCrewOutput(
+        pydantic=patch,
+        tasks_output=[
+            FakeTaskOutput(locator),
+            FakeTaskOutput(patch),
+        ],
+    )
+
+    with pytest.raises(
+        CrewOutputError,
+        match="must not contain source data",
+    ):
+        validate_crew_output(output)
+
+
+def test_second_turn_receives_successful_follow_up_context(
+    tmp_path,
+) -> None:
+    target = tmp_path / "style.css"
+
+    original = (
+        ".cta {\n"
+        "  background: green;\n"
+        "}\n"
+    )
+
+    target.write_text(
+        original,
+        encoding="utf-8",
+    )
+
+    first_locator = LocatorResult(
+        status="located",
+        file="style.css",
+        target="CTA background declaration",
+        selector=".cta",
+        property="background",
+        exact_source="background: green;",
+        message="Located the CTA background.",
+    )
+
+    first_patch = ProposedPatch(
+        status="ready",
+        file="style.css",
+        old_text="background: green;",
+        new_text="background: #245c3b;",
+        target="CTA background declaration",
+        selector=".cta",
+        property="background",
+        summary="Darken the CTA background.",
+    )
+
+    first_output = FakeCrewOutput(
+        pydantic=first_patch,
+        tasks_output=[
+            FakeTaskOutput(first_locator),
+            FakeTaskOutput(first_patch),
+        ],
+    )
+
+    state = SessionState(history_limit=3)
+    settings = make_settings(tmp_path)
+
+    process_turn(
+        settings=settings,
+        session_state=state,
+        instruction="Make the CTA background darker.",
+        sources={
+            "index.html": "<main></main>\n",
+            "style.css": original,
+        },
+        crew_executor=lambda settings, inputs: first_output,
+    )
+
+    current_css = target.read_text(
+        encoding="utf-8"
+    )
+
+    second_locator = LocatorResult(
+        status="located",
+        file="style.css",
+        target="CTA background declaration",
+        selector=".cta",
+        property="background",
+        exact_source="background: #245c3b;",
+        message=(
+            "Relocated the previous CTA background "
+            "in current source."
+        ),
+    )
+
+    second_patch = ProposedPatch(
+        status="ready",
+        file="style.css",
+        old_text="background: #245c3b;",
+        new_text="background: #173d2d;",
+        target="CTA background declaration",
+        selector=".cta",
+        property="background",
+        summary="Darken the CTA background again.",
+    )
+
+    second_output = FakeCrewOutput(
+        pydantic=second_patch,
+        tasks_output=[
+            FakeTaskOutput(second_locator),
+            FakeTaskOutput(second_patch),
+        ],
+    )
+
+    captured_inputs: dict[str, str] = {}
+
+    def second_executor(settings, inputs):
+        captured_inputs.update(inputs)
+        return second_output
+
+    result = process_turn(
+        settings=settings,
+        session_state=state,
+        instruction="Make it even darker.",
+        sources={
+            "index.html": "<main></main>\n",
+            "style.css": current_css,
+        },
+        crew_executor=second_executor,
+    )
+
+    assert result.status == "applied"
+    assert state.successful_turn_count == 2
+
+    assert (
+        "likely follow-up: yes"
+        in captured_inputs["session_memory"]
+    )
+    assert (
+        "CTA background declaration"
+        in captured_inputs["session_memory"]
+    )
+    assert (
+        "background: #245c3b;"
+        in captured_inputs["source_bundle"]
+    )
+
+    assert target.read_text(
+        encoding="utf-8"
+    ) == (
+        ".cta {\n"
+        "  background: #173d2d;\n"
+        "}\n"
+    )
