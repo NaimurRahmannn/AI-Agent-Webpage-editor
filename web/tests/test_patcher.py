@@ -253,3 +253,36 @@ def test_rejects_overlapping_matches(tmp_path) -> None:
     assert target.read_text(
         encoding="utf-8"
     ) == "aaa"
+
+    
+def test_expected_snapshot_mismatch_creates_no_backup(
+    tmp_path,
+) -> None:
+    target = tmp_path / "style.css"
+    target.write_text(
+        "color: green;",
+        encoding="utf-8",
+    )
+
+    patch = ready_patch(
+        "color: green;",
+        "color: blue;",
+    )
+
+    with pytest.raises(
+        PatchSourceChangedError,
+        match="supplied to the crew",
+    ):
+        apply_patch(
+            make_settings(tmp_path),
+            patch,
+            expected_source_text="color: red;",
+        )
+
+    assert target.read_text(
+        encoding="utf-8"
+    ) == "color: green;"
+
+    assert not (
+        tmp_path / "style.css.bak"
+    ).exists()

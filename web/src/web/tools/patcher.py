@@ -373,9 +373,15 @@ def atomic_replace_text(
 def apply_patch(
     settings: Settings,
     patch: ProposedPatch,
+    *,
+    expected_source_text: str | None = None,
 ) -> PatchApplicationResult:
     """
     Validate, back up, and apply one exact unique replacement.
+
+    When expected_source_text is supplied, the current source must still
+    match the snapshot provided to the CrewAI agents. This prevents a patch
+    generated from stale source from being applied.
 
     Validation and diff construction happen before backup creation.
     Source writing happens only after the backup has been verified.
@@ -402,11 +408,19 @@ def apply_patch(
         raise PatchValidationError(
             "old_text and new_text must be different"
         )
-
     source_bytes, source_text = read_utf8_source(
-        target,
-        relative_name,
-    )
+    target,
+    relative_name,
+)
+
+    if (
+        expected_source_text is not None
+        and source_text != expected_source_text
+    ):
+        raise PatchSourceChangedError(
+            "source changed after it was supplied to the crew; "
+            "patch was not written"
+        )
 
     match_index = find_unique_occurrence(
         source_text,

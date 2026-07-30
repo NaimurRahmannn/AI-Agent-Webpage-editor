@@ -1,0 +1,367 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Literal, Protocol
+
+from web.crew import (
+    LLMConfigurationError,
+    WebEditingCrew,
+    build_crew_inputs,
+)
+from web.models import LocatorResult, ProposedPatch
+from web.settings import Settings
+from web.state import SessionState
+from web.tools.patcher import (
+    PatchApplicationResult,
+    apply_patch,
+)
+
+
+class TurnError(RuntimeError):
+    """Base error for one conversational editing turn."""
+
+
+class CrewExecutionError(TurnError):
+    """Raised when CrewAI cannot complete the locator/editor run."""
+
+
+class CrewOutputError(TurnError):
+    """Raised when CrewAI returns unsafe or inconsistent output."""
+
+
+class CrewExecutor(Protocol):
+    """Callable interface used to execute one crew turn."""
+
+    def __call__(
+        self,
+        settings: Settings,
+        inputs: Mapping[str, str],
+    ) -> object:
+        """Execute the crew and return its result."""
+
+
+class PatchApplier(Protocol):
+    """Callable interface used to apply one validated patch."""
+
+    def __call__(
+        self,
+        settings: Settings,
+        patch: ProposedPatch,
+        *,
+        expected_source_text: str | None = None,
+    ) -> PatchApplicationResult:
+        """Apply one patch against an expected source snapshot."""
+
+
+@dataclass(frozen=True, slots=True)
+class TurnResult:
+    """Result of one completed conversational turn."""
+
+    status: Literal[
+        "applied",
+        "ambiguous",
+        "unsupported",
+    ]
+
+    summary: str
+    message: str | None = None
+    file: str | None = None
+    backup_file: str | None = None
+    diff: str | None = None
+
+
+def execute_crew(
+    settings: Settings,
+    inputs: Mapping[str, str],
+) -> object:
+    """
+    Construct and execute one fresh sequential crew.
+
+    A fresh crew is created for every turn so that task state is not
+    accidentally shared between editing instructions.
+    """
+
+    try:
+        definition = WebEditingCrew(settings)
+        editing_crew = definition.crew()
+
+        return editing_crew.kickoff(
+            inputs=dict(inputs)
+        )
+
+    except LLMConfigurationError:
+        raise
+
+    except Exception as exc:
+        # Do not include raw provider diagnostics because they could
+        # contain sensitive request or environment information.
+        raise CrewExecutionError(
+            "Crew execution failed "
+            f"({type(exc).__name__})."
+        ) from exc
+
+
+def _extract_task_models(
+    crew_output: object,
+) -> tuple[LocatorResult, ProposedPatch]:
+    """Extract and type-check the two sequential task outputs."""
+
+    task_outputs = getattr(
+        crew_output,
+        "tasks_output",
+        None,
+    )
+
+    if (
+        not isinstance(task_outputs, Sequence)
+        or isinstance(task_outputs, (str, bytes))
+    ):
+        raise CrewOutputError(
+            "crew result did not contain task outputs"
+        )
+
+    if len(task_outputs) != 2:
+        raise CrewOutputError(
+            "crew result must contain exactly two task outputs"
+        )
+
+    locator_output = getattr(
+        task_outputs[0],
+        "pydantic",
+        None,
+    )
+    editor_output = getattr(
+        task_outputs[1],
+        "pydantic",
+        None,
+    )
+
+    if not isinstance(
+        locator_output,
+        LocatorResult,
+    ):
+        raise CrewOutputError(
+            "locator task did not return LocatorResult"
+        )
+
+    if not isinstance(
+        editor_output,
+        ProposedPatch,
+    ):
+        raise CrewOutputError(
+            "editor task did not return ProposedPatch"
+        )
+
+    return locator_output, editor_output
+
+
+def _validate_status_relationship(
+    locator: LocatorResult,
+    patch: ProposedPatch,
+) -> None:
+    """
+    Require the editor classification to follow the locator result.
+
+    A located result must produce a ready patch. Rejected locator results
+    must remain rejected by the editor.
+    """
+
+    expected_patch_status = {
+        "located": "ready",
+        "ambiguous": "ambiguous",
+        "unsupported": "unsupported",
+    }[locator.status]
+
+    if patch.status != expected_patch_status:
+        raise CrewOutputError(
+            "editor status is inconsistent with locator status"
+        )
+
+
+def _validate_rejected_patch(
+    patch: ProposedPatch,
+) -> None:
+    """Ensure a rejected result cannot smuggle replacement data."""
+
+    replacement_values = (
+        patch.file,
+        patch.old_text,
+        patch.new_text,
+    )
+
+    if any(
+        value is not None
+        for value in replacement_values
+    ):
+        raise CrewOutputError(
+            "rejected patch must not contain replacement data"
+        )
+
+    if patch.message is None:
+        raise CrewOutputError(
+            "rejected patch must include an explanatory message"
+        )
+
+
+def _validate_ready_patch_against_locator(
+    locator: LocatorResult,
+    patch: ProposedPatch,
+) -> None:
+    """Ensure the editor used the exact located source."""
+
+    if locator.file is None:
+        raise CrewOutputError(
+            "located result is missing its file"
+        )
+
+    if locator.exact_source is None:
+        raise CrewOutputError(
+            "located result is missing exact source"
+        )
+
+    if patch.file != locator.file:
+        raise CrewOutputError(
+            "editor patch file does not match locator file"
+        )
+
+    if patch.old_text != locator.exact_source:
+        raise CrewOutputError(
+            "editor old_text does not match locator exact_source"
+        )
+
+
+def validate_crew_output(
+    crew_output: object,
+) -> tuple[LocatorResult, ProposedPatch]:
+    """
+    Validate the final CrewAI output and both individual task outputs.
+
+    Raw text is deliberately not parsed as a fallback. The write path
+    requires successful Pydantic structured output.
+    """
+
+    locator, editor_patch = _extract_task_models(
+        crew_output
+    )
+
+    final_patch = getattr(
+        crew_output,
+        "pydantic",
+        None,
+    )
+
+    if not isinstance(
+        final_patch,
+        ProposedPatch,
+    ):
+        raise CrewOutputError(
+            "final crew result did not return ProposedPatch"
+        )
+
+    if (
+        final_patch.model_dump()
+        != editor_patch.model_dump()
+    ):
+        raise CrewOutputError(
+            "final result does not match editor task output"
+        )
+
+    _validate_status_relationship(
+        locator,
+        editor_patch,
+    )
+
+    if editor_patch.status == "ready":
+        _validate_ready_patch_against_locator(
+            locator,
+            editor_patch,
+        )
+    else:
+        _validate_rejected_patch(editor_patch)
+
+    return locator, editor_patch
+
+
+def process_turn(
+    *,
+    settings: Settings,
+    session_state: SessionState,
+    instruction: str,
+    sources: Mapping[str, str],
+    crew_executor: CrewExecutor = execute_crew,
+    patch_applier: PatchApplier = apply_patch,
+) -> TurnResult:
+    """
+    Execute one complete conversational editing turn.
+
+    Session memory is updated only after the patcher returns successfully.
+    """
+
+    inputs = build_crew_inputs(
+        instruction=instruction,
+        sources=sources,
+        session_memory=session_state.build_context(),
+    )
+
+    try:
+        crew_output = crew_executor(
+            settings,
+            inputs,
+        )
+    except LLMConfigurationError:
+        raise
+    except CrewExecutionError:
+        raise
+    except Exception as exc:
+        raise CrewExecutionError(
+            "Crew execution failed "
+            f"({type(exc).__name__})."
+        ) from exc
+
+    _, patch = validate_crew_output(crew_output)
+
+    if patch.status == "ambiguous":
+        return TurnResult(
+            status="ambiguous",
+            summary=patch.summary,
+            message=patch.message,
+        )
+
+    if patch.status == "unsupported":
+        return TurnResult(
+            status="unsupported",
+            summary=patch.summary,
+            message=patch.message,
+        )
+
+    if patch.file is None:
+        raise CrewOutputError(
+            "ready patch file is missing"
+        )
+
+    if patch.file not in sources:
+        raise CrewOutputError(
+            "ready patch refers to a file absent "
+            "from the current source snapshot"
+        )
+
+    application = patch_applier(
+        settings,
+        patch,
+        expected_source_text=sources[patch.file],
+    )
+
+    # This must happen after validation, backup creation, and atomic write.
+    session_state.record_success(
+        instruction,
+        patch,
+    )
+
+    return TurnResult(
+        status="applied",
+        summary=application.summary,
+        file=application.file,
+        backup_file=application.backup_file,
+        diff=application.diff,
+    )
