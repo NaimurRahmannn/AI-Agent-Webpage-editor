@@ -1,9 +1,35 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
-from crewai import Agent, Crew, LLM, Process, Task
-from crewai.project import CrewBase, agent, crew, task
+try:
+    from crewai import Agent, Crew, LLM, Process, Task
+    from crewai.project import CrewBase, agent, crew, task
+except ImportError as exc:
+    CREWAI_IMPORT_ERROR: ImportError | None = exc
+
+    class _MissingCrewAI:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise LLMConfigurationError(
+                "CrewAI is not installed. Install project dependencies "
+                "with `pip install -e .` from the web directory."
+            )
+
+    Agent = Crew = LLM = Task = _MissingCrewAI
+
+    class Process:
+        sequential = "sequential"
+
+    def CrewBase(cls):
+        return cls
+
+    def _identity_decorator(func):
+        return func
+
+    agent = crew = task = _identity_decorator
+else:
+    CREWAI_IMPORT_ERROR = None
 
 from web.models import LocatorResult, ProposedPatch
 from web.settings import Settings
@@ -20,6 +46,12 @@ def build_groq_llm(settings: Settings) -> LLM:
     Constructing this object does not make an API request. A network call
     occurs only when the crew is kicked off.
     """
+
+    if CREWAI_IMPORT_ERROR is not None:
+        raise LLMConfigurationError(
+            "CrewAI is not installed. Install project dependencies "
+            "with `pip install -e .` from the web directory."
+        ) from CREWAI_IMPORT_ERROR
 
     if not settings.llm_is_configured:
         raise LLMConfigurationError(

@@ -141,6 +141,18 @@ def read_utf8_source(
     return source_bytes, source_text
 
 
+def text_matches_snapshot(
+    current_source: str,
+    expected_source: str,
+) -> bool:
+    """Compare source text the same way Path.read_text() normalizes it."""
+
+    return (
+        current_source == expected_source
+        or current_source.splitlines() == expected_source.splitlines()
+    )
+
+
 def find_unique_occurrence(
     source: str,
     old_text: str,
@@ -415,7 +427,10 @@ def apply_patch(
 
     if (
         expected_source_text is not None
-        and source_text != expected_source_text
+        and not text_matches_snapshot(
+            source_text,
+            expected_source_text,
+        )
     ):
         raise PatchSourceChangedError(
             "source changed after it was supplied to the crew; "

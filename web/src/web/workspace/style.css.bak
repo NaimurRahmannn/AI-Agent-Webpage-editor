@@ -92,7 +92,7 @@ h1 {
   padding: 14px 20px;
   border-radius: 999px;
   color: #ffffff;
-  background: #2d6a4f;
+  background: var(--accent);
   font-weight: 700;
   text-decoration: none;
   transition:

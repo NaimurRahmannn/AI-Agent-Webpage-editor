@@ -5,6 +5,7 @@ import pytest
 from web.models import ProposedPatch
 from web.settings import Settings
 from web.tools.patcher import (
+    PatchSourceChangedError,
     PatchValidationError,
     apply_patch,
 )
@@ -265,8 +266,8 @@ def test_expected_snapshot_mismatch_creates_no_backup(
     )
 
     patch = ready_patch(
-        "color: green;",
-        "color: blue;",
+        old_text="color: green;",
+        new_text="color: blue;",
     )
 
     with pytest.raises(
