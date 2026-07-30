@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Final
@@ -21,13 +22,41 @@ MAX_PROPERTY_CHARS: Final = 120
 MAX_CONTEXT_CHARS: Final = 6_000
 
 
-def _compact_text(value: str, maximum: int) -> str:
-    """
-    Collapse whitespace and limit text retained in conversational memory.
+REFERENTIAL_TOKENS: Final = frozenset(
+    {
+        "it",
+        "its",
+        "that",
+        "this",
+        "those",
+        "these",
+        "same",
+        "again",
+    }
+)
 
-    This prevents one unusually large instruction or summary from making
-    the supposedly bounded memory context grow without limit.
-    """
+COMPARATIVE_OPENERS: Final = frozenset(
+    {
+        "darker",
+        "lighter",
+        "brighter",
+        "bigger",
+        "smaller",
+        "wider",
+        "narrower",
+        "rounder",
+        "more",
+        "less",
+        "even",
+    }
+)
+
+
+def _compact_text(
+    value: str,
+    maximum: int,
+) -> str:
+    """Collapse whitespace and limit retained memory text."""
 
     compact = " ".join(value.split())
 
@@ -51,18 +80,94 @@ def _compact_optional(
     return compact or None
 
 
+def instruction_looks_like_follow_up(
+    instruction: str,
+) -> bool:
+    """
+    Detect wording that probably refers to a previous successful edit.
+
+    This is an advisory heuristic only. The locator must still identify
+    an exact target in the current files.
+    """
+
+    normalized = " ".join(
+        instruction.casefold().split()
+    )
+
+    if not normalized:
+        return False
+
+    tokens = re.findall(
+        r"[a-z0-9']+",
+        normalized,
+    )
+
+    if not tokens:
+        return False
+
+    if any(
+        token in REFERENTIAL_TOKENS
+        for token in tokens
+    ):
+        return True
+
+    # Short phrases such as "even darker" and "rounder please" are
+    # commonly conversational follow-ups.
+    if (
+        len(tokens) <= 4
+        and tokens[0] in COMPARATIVE_OPENERS
+    ):
+        return True
+
+    return False
+
+
+def _render_turn(
+    index: int,
+    turn: SuccessfulTurn,
+) -> str:
+    """Render one complete successful-turn record."""
+
+    label = (
+        f"{index}. most recent successful turn"
+        if index == 1
+        else f"{index}. earlier successful turn"
+    )
+
+    lines = [
+        label,
+        f"   instruction: {turn.instruction}",
+        f"   summary: {turn.summary}",
+        f"   file: {turn.file}",
+        f"   target: {turn.target}",
+        (
+            f"   selector: {turn.selector}"
+            if turn.selector
+            else "   selector: none"
+        ),
+        (
+            f"   property: {turn.property}"
+            if turn.property
+            else "   property: none"
+        ),
+    ]
+
+    return "\n".join(lines)
+
+
 @dataclass(slots=True)
 class SessionState:
     """
-    Bounded memory retained only during the current Python process.
+    Bounded memory retained only during the current process.
 
-    This class stores summaries and target metadata only. It does not
-    store complete file snapshots, patch bodies, API responses, or
-    persistent history.
+    Current source files remain authoritative. This state stores compact
+    metadata and summaries, not source snapshots or patch bodies.
     """
 
     history_limit: int
-    _successful_turns: deque[SuccessfulTurn] = field(init=False)
+    _successful_turns: deque[SuccessfulTurn] = field(
+        init=False
+    )
     _last_target: LastTarget | None = field(
         init=False,
         default=None,
@@ -70,33 +175,33 @@ class SessionState:
 
     def __post_init__(self) -> None:
         if self.history_limit < 1:
-            raise ValueError("history_limit must be at least 1")
+            raise ValueError(
+                "history_limit must be at least 1"
+            )
 
-        self._successful_turns = deque(maxlen=self.history_limit)
+        self._successful_turns = deque(
+            maxlen=self.history_limit
+        )
 
     @property
     def successful_turn_count(self) -> int:
-        """Return the number of retained successful turns."""
-
         return len(self._successful_turns)
 
     @property
-    def successful_turns(self) -> tuple[SuccessfulTurn, ...]:
-        """Return a copy of retained successful turns."""
-
+    def successful_turns(
+        self,
+    ) -> tuple[SuccessfulTurn, ...]:
         return tuple(self._successful_turns)
 
     @property
     def last_target(self) -> LastTarget | None:
-        """Return the most recently edited target metadata."""
-
         return self._last_target
 
     def snapshot(self) -> SessionMemorySnapshot:
-        """Return a validated copy of the current session memory."""
-
         return SessionMemorySnapshot(
-            recent_successful_turns=tuple(self._successful_turns),
+            recent_successful_turns=tuple(
+                self._successful_turns
+            ),
             last_target=self._last_target,
         )
 
@@ -106,10 +211,10 @@ class SessionState:
         patch: ProposedPatch,
     ) -> None:
         """
-        Record a patch only after it has been successfully written.
+        Record one turn only after a successful source write.
 
-        Future orchestration must call this method after validation,
-        backup creation, atomic writing, and diff generation succeed.
+        Future orchestration must call this after validation, backup
+        creation, atomic replacement, and diff generation succeed.
         """
 
         if patch.status != "ready":
@@ -118,10 +223,14 @@ class SessionState:
             )
 
         if patch.file is None:
-            raise ValueError("ready patch file is missing")
+            raise ValueError(
+                "ready patch file is missing"
+            )
 
         if patch.target is None:
-            raise ValueError("ready patch target is missing")
+            raise ValueError(
+                "ready patch target is missing"
+            )
 
         turn = SuccessfulTurn(
             instruction=_compact_text(
@@ -159,80 +268,132 @@ class SessionState:
             property=turn.property,
         )
 
-    def build_context(self) -> str:
+    def build_context(
+        self,
+        instruction: str | None = None,
+    ) -> str:
         """
-        Render bounded memory for future locator and editor prompts.
+        Render bounded advisory context for locator/editor tasks.
 
-        The context explicitly tells agents that memory is advisory and
-        current files remain authoritative.
+        Successful turns are rendered newest first. Complete records are
+        included until the context limit is reached.
         """
+
+        follow_up = (
+            instruction_looks_like_follow_up(
+                instruction
+            )
+            if instruction is not None
+            else False
+        )
 
         lines = [
             "SESSION MEMORY",
             "Current source files are the source of truth.",
-            "Use this memory only to resolve conversational follow-ups.",
-            "It describes successful edits only.",
+            (
+                "Memory may only help resolve references to "
+                "previous successful edits."
+            ),
+            (
+                "Never reuse old source text from memory; "
+                "relocate the target in current source."
+            ),
+            "",
+            "Follow-up assessment:",
+            (
+                "- likely follow-up: yes"
+                if follow_up
+                else "- likely follow-up: no"
+            ),
         ]
 
-        if self._last_target is None:
-            lines.extend(
-                [
-                    "",
-                    "Last successful target:",
-                    "- none",
-                ]
+        if follow_up and self._last_target is not None:
+            lines.append(
+                "- guidance: consider the last successful "
+                "target first, then relocate it in current source"
             )
+        elif follow_up:
+            lines.append(
+                "- guidance: no successful target exists; "
+                "reject an unresolved reference as ambiguous"
+            )
+        else:
+            lines.append(
+                "- guidance: treat the instruction as standalone "
+                "unless its wording clearly references prior work"
+            )
+
+        lines.extend(
+            [
+                "",
+                "Last successful target:",
+            ]
+        )
+
+        if self._last_target is None:
+            lines.append("- none")
         else:
             lines.extend(
                 [
-                    "",
-                    "Last successful target:",
                     f"- file: {self._last_target.file}",
                     f"- target: {self._last_target.target}",
                     (
-                        f"- selector: {self._last_target.selector}"
+                        f"- selector: "
+                        f"{self._last_target.selector}"
                         if self._last_target.selector
                         else "- selector: none"
                     ),
                     (
-                        f"- property: {self._last_target.property}"
+                        f"- property: "
+                        f"{self._last_target.property}"
                         if self._last_target.property
                         else "- property: none"
                     ),
                 ]
             )
 
-        lines.extend(["", "Recent successful turns:"])
-
-        if not self._successful_turns:
-            lines.append("- none")
-        else:
-            for index, turn in enumerate(
-                self._successful_turns,
-                start=1,
-            ):
-                lines.extend(
-                    [
-                        f"{index}. instruction: {turn.instruction}",
-                        f"   summary: {turn.summary}",
-                        f"   file: {turn.file}",
-                        f"   target: {turn.target}",
-                        (
-                            f"   selector: {turn.selector}"
-                            if turn.selector
-                            else "   selector: none"
-                        ),
-                        (
-                            f"   property: {turn.property}"
-                            if turn.property
-                            else "   property: none"
-                        ),
-                    ]
-                )
+        lines.extend(
+            [
+                "",
+                "Recent successful turns, newest first:",
+            ]
+        )
 
         rendered = "\n".join(lines)
 
-        if len(rendered) <= MAX_CONTEXT_CHARS:
-            return rendered
+        if not self._successful_turns:
+            candidate = f"{rendered}\n- none"
+            return candidate[:MAX_CONTEXT_CHARS]
 
-        return f"{rendered[: MAX_CONTEXT_CHARS - 1]}…"
+        omitted_count = 0
+
+        for index, turn in enumerate(
+            reversed(self._successful_turns),
+            start=1,
+        ):
+            turn_block = _render_turn(index, turn)
+            candidate = f"{rendered}\n{turn_block}"
+
+            if len(candidate) > MAX_CONTEXT_CHARS:
+                omitted_count = (
+                    len(self._successful_turns)
+                    - index
+                    + 1
+                )
+                break
+
+            rendered = candidate
+
+        if omitted_count:
+            omission = (
+                f"\n- {omitted_count} older successful "
+                "turn(s) omitted by the context limit"
+            )
+
+            if (
+                len(rendered) + len(omission)
+                <= MAX_CONTEXT_CHARS
+            ):
+                rendered += omission
+
+        return rendered[:MAX_CONTEXT_CHARS]
