@@ -1,23 +1,25 @@
 [project]
 name = "web"
-version = "0.1.0"
-description = "web using crewAI"
-authors = [{ name = "Your Name", email = "you@example.com" }]
+version = "1"
+description = "Conversational HTML/CSS editor using CrewAI and Groq"
+authors = [
+    { name = "Naimur Rahman Lam", email = "you@example.com" }
+]
 requires-python = ">=3.10,<3.14"
 dependencies = [
-    "crewai[tools]>=1.15.9,<2.0.0",
+    "crewai[tools,litellm]>=1.15.9,<2.0.0",
     "pydantic>=2.12,<3.0",
     "pydantic-settings>=2.12,<3.0",
     "python-dotenv>=1.0,<2.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+]
+
 [project.scripts]
 web = "web.main:run"
-run_crew = "web.main:run"
-train = "web.main:train"
-replay = "web.main:replay"
-test = "web.main:test"
-run_with_trigger = "web.main:run_with_trigger"
 
 [build-system]
 requires = ["hatchling"]
@@ -25,8 +27,3 @@ build-backend = "hatchling.build"
 
 [tool.crewai]
 type = "crew"
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8,<10",
-]
