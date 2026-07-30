@@ -176,6 +176,7 @@ class WebEditingCrew:
         return Agent(
             config=self.agents_config["locator_agent"],
             llm=self._shared_llm,
+            tools=[],
             allow_delegation=False,
             verbose=False,
             max_iter=3,
@@ -185,9 +186,16 @@ class WebEditingCrew:
     def editor_agent(self) -> Agent:
         """Create the minimal-patch editor agent."""
 
+        tools: list[Any] = []
+        if self.settings.gemini_cli_enabled:
+            from web.tools.gemini_cli_tool import GeminiCliReviewTool
+
+            tools.append(GeminiCliReviewTool(settings=self.settings))
+
         return Agent(
             config=self.agents_config["editor_agent"],
             llm=self._shared_llm,
+            tools=tools,
             allow_delegation=False,
             verbose=False,
             max_iter=3,

@@ -1,6 +1,6 @@
-# Supervisor Demonstration Script (DEMO.md)
+# Supervisor Demonstration Script (DEMO.md) — Phase 8
 
-This document provides a supervisor-ready, step-by-step demonstration walkthrough for the **CrewAI Conversational HTML/CSS Editing Agent**.
+This document provides a supervisor-ready, step-by-step demonstration walkthrough for the **CrewAI Conversational HTML/CSS Editing Agent with Embedded Gemini CLI Read-Only Patch Reviewer**.
 
 ---
 
@@ -15,7 +15,10 @@ cd web
 # Verify Python version (>=3.10)
 python --version
 
-# Verify environment file exists and GROQ_API_KEY is configured
+# Verify Gemini CLI installation
+gemini --version
+
+# Verify environment configuration
 cat .env
 
 # Verify clean workspace state (no lingering backup files)
@@ -24,29 +27,35 @@ git status src/web/workspace/
 
 ---
 
-## 2. Architecture Quick Summary for Supervisor
+## 2. Architecture & Tooling Quick Summary for Supervisor
 
 | System Component | Responsibility |
 | :--- | :--- |
-| **Terminal REPL (`session.py`)** | Interactive prompt, history rendering, user status commands. |
+| **Terminal REPL (`session.py`)** | Interactive prompt, history rendering, status display. |
 | **Orchestration Core (`orchestration.py`)** | Coordinates source rereading, memory injection, crew execution, validation, and patcher calls. |
-| **CrewAI Locator Agent (`crew.py`)** | Identifies file, target element/selector, and exact source snippet (`LocatorResult`). |
-| **CrewAI Editor Agent (`crew.py`)** | Uses locator task output to create exact `old_text` and `new_text` patch (`ProposedPatch`). |
-| **Deterministic Patcher (`patcher.py`)** | Validates exact 1-match criteria, path allowlisting, creates `.bak` backups, and executes atomic file writes. |
-| **Session Memory (`state.py`)** | Holds bounded recent successful turns to enable referential follow-ups ("make it darker"). |
+| **CrewAI Locator Agent (`crew.py`)** | Identifies file, target element/selector, and exact source snippet (`LocatorResult`). **Has NO tools.** |
+| **CrewAI Editor Agent (`crew.py`)** | Uses locator task output to create candidate patch (`ProposedPatch`). **Has `GeminiCliReviewTool` when enabled.** |
+| **Embedded Gemini CLI Reviewer (`gemini_cli_tool.py`)** | Runs Gemini CLI in read-only plan mode (`--approval-mode plan`) via `stdin`. Returns advisory review verdict (`approved`, `unsafe`, `unavailable`). **NEVER writes files.** |
+| **Deterministic Patcher (`patcher.py`)** | Validates exact 1-match criteria, path allowlisting, creates `.bak` backups, and executes atomic file writes. **Sole writer.** |
 
 ---
 
 ## 3. Automated Test Verification
 
-Run the full automated test suite (125+ unit & integration tests, 100% deterministic with mocked LLM calls):
+Run the full automated test suite (140+ unit & integration tests, 100% deterministic with mocked LLM and subprocess calls):
 
 ```bash
 uv run pytest tests/ -v
 ```
 
+Run Phase 8 tests only:
+
+```bash
+uv run pytest tests/test_gemini_cli_tool.py tests/test_gemini_cli_integration.py -v
+```
+
 Expected Output:
-`125+ passed` (with 0 failures).
+`140+ passed` (with 0 failures).
 
 ---
 
@@ -60,85 +69,79 @@ uv run web
 
 ---
 
-### Step 1: Direct HTML Editing
+### Step 1: CSS Edit with Gemini CLI Read-Only Review
 
-**Demonstrating direct HTML modification.**
-
-**Input Prompt:**
-```text
-web> Change the main hero heading text to "Ship extraordinary products."
-```
-
-**Expected Behavior:**
-- Agent identifies `src/web/workspace/index.html`.
-- Agent extracts exact `<h1>` tag.
-- Unified diff printed to terminal showing deleted `- <h1>...</h1>` and added `+ <h1>...</h1>`.
-- `index.html.bak` backup file created automatically in workspace.
-
----
-
-### Step 2: Direct CSS Editing
-
-**Demonstrating direct CSS styling modification.**
+**Demonstrating direct CSS styling edit with background Gemini CLI review.**
 
 **Input Prompt:**
 ```text
 web> Change the CTA button background color to #2d6a4f
 ```
 
-**Expected Behavior:**
-- Agent identifies `src/web/workspace/style.css`.
-- Agent targets `.cta` rule `background: #ff0000;`.
-- Unified diff shows replaced declaration.
-- `style.css.bak` created in workspace.
+**What Happens Behind the Scenes:**
+1. **Locator Agent** locates `.cta` rule `background: #ff0000;` in `style.css`.
+2. **Editor Agent** prepares candidate patch `background: #2d6a4f;`.
+3. **Editor Agent** calls `GeminiCliReviewTool` over `stdin` using:
+   `gemini --model flash --approval-mode plan --output-format json`
+4. **Gemini CLI** returns advisory verdict `approved`.
+5. **Editor Agent** returns final `ProposedPatch`.
+6. **Python Patcher** creates backup `style.css.bak`, applies atomic write, and prints unified diff.
+
+**Supervisor Note**: Gemini reviewed the patch, but **Python was the sole writer** of the backup and source file.
 
 ---
 
-### Step 3: Conversational Follow-Up Edit
+### Step 2: Inspection of Backup and Unified Diff
 
-**Demonstrating memory and referential context.**
+**Demonstrating safety artifacts generated by Python.**
 
-**Input Prompt:**
-```text
-web> Make that button color even darker green, like #1b4332
+```bash
+# View created backup file
+cat src/web/workspace/style.css.bak
+
+# View modified file
+cat src/web/workspace/style.css
 ```
 
-**Expected Behavior:**
-- Agent resolves "that button color" using `SessionState` memory (`LastTarget`).
-- Sources are reread directly from disk (reflecting the edit from Step 2).
-- Diff shows update from `#2d6a4f` to `#1b4332`.
+**Expected Output:**
+- `style.css.bak` contains original `background: #ff0000;`.
+- `style.css` contains modified `background: #2d6a4f;`.
 
 ---
 
-### Step 4: Rejection of Ambiguous Instruction
+### Step 3: Rejection of Unsafe JavaScript Request
 
-**Demonstrating safe refusal of ambiguous requests.**
+**Demonstrating reviewer & locator boundary enforcement.**
 
 **Input Prompt:**
 ```text
-web> Make the text bigger
+web> Add an onclick JavaScript handler to the CTA button
 ```
 
 **Expected Behavior:**
-- Agent detects multiple text elements (headings, paragraphs, buttons).
-- Agent refuses edit with `status: ambiguous` and asks user to specify which element to change.
-- No files are modified; no backup created.
+- Request flagged as `unsupported`.
+- Refusal message explains JavaScript is out of scope.
+- No files are written; no backup is created.
 
 ---
 
-### Step 5: Rejection of Unsupported Scope (JavaScript / Multi-File)
+### Step 4: Disabling Gemini CLI via Configuration
 
-**Demonstrating boundary enforcement.**
+**Demonstrating standalone operation without Gemini CLI.**
 
-**Input Prompt:**
-```text
-web> Add a JavaScript click event listener to the CTA button and change CSS padding at the same time
+Set in `.env`:
+```env
+GEMINI_CLI_ENABLED=false
+```
+
+Relaunch terminal:
+```bash
+uv run web
 ```
 
 **Expected Behavior:**
-- Agent rejects request with `status: unsupported`.
-- Refusal reason explains JavaScript and multi-file edits are strictly out of scope.
-- Files remain intact.
+- Agent operates using primary CrewAI agents without Gemini CLI tool attachment.
+- All Phase 1–7 editing and memory capabilities continue to work normally.
 
 ---
 
@@ -158,12 +161,11 @@ git checkout src/web/workspace/
 
 ## 6. Final Project Acceptance Checklist
 
-- [x] **Architecture**: Long-running CLI REPL with Crews using `Process.sequential`.
-- [x] **Strict Models**: `LocatorResult` and `ProposedPatch` inherit from `StrictModel` (`extra = "forbid"`).
-- [x] **Single-File Safety**: Exactly one file modified per turn with exact 1-match verification.
-- [x] **Deterministic Patcher**: Backup rotation (`.bak`), atomic replacement, unified diffs.
-- [x] **Source Reread**: Allowed HTML/CSS files reread on every turn.
-- [x] **Conversational Memory**: Bounded session history (`SESSION_HISTORY_LIMIT=5`).
-- [x] **Reliability**: Provider errors gracefully classified without leaking API keys.
-- [x] **Test Coverage**: Complete suite covering success, rejection, and failure paths.
+- [x] **Architecture**: Sequential CrewAI crew with Groq primary LLM and embedded Gemini CLI reviewer.
+- [x] **Safety Boundaries**: Gemini CLI runs strictly with `--approval-mode plan` over `stdin`.
+- [x] **No Writes by Gemini**: Python patcher is the single authoritative source writer and backup creator.
+- [x] **Subprocess Control**: `shell=False`, minimal environment dictionary, secret redaction.
+- [x] **Tool Attachment**: `GeminiCliReviewTool` attached ONLY to `editor_agent` when enabled. `locator_agent` has no tools.
+- [x] **Toggleable**: `GEMINI_CLI_ENABLED=false` disables reviewer tool cleanly.
+- [x] **Test Coverage**: 100% mocked unit and integration tests covering tool, settings, subprocess, and turn flows.
 - [x] **Documentation**: Complete `README.md` and supervisor `DEMO.md`.

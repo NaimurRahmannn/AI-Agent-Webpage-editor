@@ -112,6 +112,16 @@ editor_task:
     3. Preserve the locator's file, selector, and property metadata when
        they are present.
 
+    Reviewer Tool Handling (Phase 8):
+
+    If the locator result is "located" and the gemini_cli_review tool is available:
+    - Formulate a candidate patch first.
+    - Submit the candidate patch to gemini_cli_review for read-only plan mode review.
+    - Treat the returned review verdict as advisory.
+    - If the verdict is "approved", proceed with returning the ready patch.
+    - If the verdict is "revision_required" or "unsafe", adjust the patch or return status "unsupported".
+    - If the tool is not available, proceed directly with producing your ProposedPatch.
+
     Editing rules:
 
     1. If the locator result is "ambiguous":
