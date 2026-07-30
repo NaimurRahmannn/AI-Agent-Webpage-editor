@@ -10,7 +10,10 @@ from web.orchestration import (
     TurnResult,
     process_turn,
 )
-from web.settings import Settings, resolve_allowed_paths
+from web.settings import (
+    Settings,
+    resolve_allowed_paths,
+)
 from web.state import SessionState
 from web.tools.patcher import (
     PatchBackupError,
@@ -31,12 +34,7 @@ class SourceReadError(RuntimeError):
 def read_current_sources(
     settings: Settings,
 ) -> Mapping[str, str]:
-    """
-    Read every allowlisted source file directly from disk.
-
-    This function is called for every non-empty user instruction.
-    Source contents are never cached between turns.
-    """
+    """Read every configured source file fresh from disk."""
 
     sources: dict[str, str] = {}
 
@@ -71,8 +69,28 @@ def read_current_sources(
     return sources
 
 
+def source_snapshot_matches(
+    settings: Settings,
+    expected_sources: Mapping[str, str],
+) -> bool | None:
+    """
+    Check whether current source still matches a previous snapshot.
+
+    None means the verification itself could not be completed.
+    """
+
+    try:
+        current_sources = read_current_sources(
+            settings
+        )
+    except (SourceReadError, ValueError):
+        return None
+
+    return dict(current_sources) == dict(expected_sources)
+
+
 def print_banner(settings: Settings) -> None:
-    """Print safe startup information without exposing secrets."""
+    """Print safe startup information."""
 
     groq_status = (
         "configured"
@@ -86,7 +104,7 @@ def print_banner(settings: Settings) -> None:
     print("--------------------------------------")
     print(f"Project root: {settings.project_root}")
     print(
-        f"Allowed files: "
+        "Allowed files: "
         f"{', '.join(settings.allowed_files)}"
     )
     print(f"Groq: {groq_status}")
@@ -97,7 +115,8 @@ def print_banner(settings: Settings) -> None:
     )
     print()
     print(
-        "Phase 5 mode: automatic sequential editing"
+        "Phase 6 mode: conversational editing "
+        "with resilient error handling"
     )
     print(
         "Valid patches are applied automatically "
@@ -110,24 +129,29 @@ def print_banner(settings: Settings) -> None:
     print()
 
 
-def print_rejection(result: TurnResult) -> None:
+def print_rejection(
+    result: TurnResult,
+) -> None:
     """Print an ambiguous or unsupported outcome."""
 
-    if result.status == "ambiguous":
-        heading = "Ambiguous request"
-    else:
-        heading = "Unsupported request"
+    heading = (
+        "Ambiguous request"
+        if result.status == "ambiguous"
+        else "Unsupported request"
+    )
 
     explanation = result.message or result.summary
 
     print(f"{heading}: {explanation}")
     print(f"Summary: {result.summary}")
-    print("No files were changed.")
+    print("No source files were changed.")
     print()
 
 
-def print_application(result: TurnResult) -> None:
-    """Print one successful patch result."""
+def print_application(
+    result: TurnResult,
+) -> None:
+    """Print a successful patch result."""
 
     print()
     print(f"Applied: {result.summary}")
@@ -144,11 +168,28 @@ def print_application(result: TurnResult) -> None:
     print()
 
 
-def print_turn_failure(message: str) -> None:
-    """Print a safe failed-turn message."""
+def print_turn_failure(
+    message: str,
+    *,
+    source_unchanged: bool | None = True,
+) -> None:
+    """Print a safe failure with an accurate source-status statement."""
 
     print(message, file=sys.stderr)
-    print("No files were changed.")
+
+    if source_unchanged is True:
+        print("No source files were changed.")
+    elif source_unchanged is False:
+        print(
+            "The source differs from the snapshot read at "
+            "the start of this turn. Inspect it before retrying."
+        )
+    else:
+        print(
+            "Source status could not be verified. "
+            "Inspect the configured files before retrying."
+        )
+
     print()
 
 
@@ -213,8 +254,15 @@ def run_session(settings: Settings) -> None:
 
         except KeyboardInterrupt:
             print()
+
+            snapshot_status = source_snapshot_matches(
+                settings,
+                sources,
+            )
+
             print_turn_failure(
-                "Crew execution was interrupted."
+                "The turn was interrupted.",
+                source_unchanged=snapshot_status,
             )
             continue
 
@@ -267,6 +315,19 @@ def run_session(settings: Settings) -> None:
         except ValueError as exc:
             print_turn_failure(
                 f"Turn validation failed: {exc}"
+            )
+            continue
+
+        except Exception as exc:
+            snapshot_status = source_snapshot_matches(
+                settings,
+                sources,
+            )
+
+            print_turn_failure(
+                "Unexpected turn failure "
+                f"({type(exc).__name__}).",
+                source_unchanged=snapshot_status,
             )
             continue
 
