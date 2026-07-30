@@ -90,9 +90,9 @@ h1 {
 .cta {
   display: inline-block;
   padding: 14px 20px;
-  border-radius: 999px;
+  border-radius: 1000px;
   color: #ffffff;
-  background: #2d6a4f;
+  background: #ff0000;
   font-weight: 700;
   text-decoration: none;
   transition:
