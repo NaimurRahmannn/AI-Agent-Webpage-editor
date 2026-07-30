@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import os
 import shutil
 import stat
@@ -13,6 +14,10 @@ from web.settings import (
     ALLOWED_SOURCE_SUFFIXES,
     Settings,
     resolve_allowed_paths,
+)
+from web.tools.syntax_validator import (
+    SyntaxValidationResult,
+    validate_source_syntax,
 )
 
 
@@ -46,6 +51,21 @@ class PatchApplicationResult:
     diff: str
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedPatch:
+    """Prepared, validated patch ready for optional preview or commit."""
+
+    file: str
+    summary: str
+    target_path: Path
+    original_text: str
+    updated_text: str
+    original_sha256: str
+    updated_sha256: str
+    diff: str
+    syntax_validation: SyntaxValidationResult
+
+
 def _backup_path(target: Path, generation: int) -> Path:
     """
     Return the backup path for a generation.
@@ -68,9 +88,7 @@ def resolve_patch_target(
     """Resolve one ready patch to one safe allowlisted source path."""
 
     if patch.status != "ready":
-        raise PatchValidationError(
-            "only a ready patch can be applied"
-        )
+        raise PatchValidationError("only a ready patch can be applied")
 
     if patch.file is None:
         raise PatchValidationError("ready patch file is missing")
@@ -175,9 +193,7 @@ def find_unique_occurrence(
     second_match = source.find(old_text, first_match + 1)
 
     if second_match >= 0:
-        raise PatchValidationError(
-            "old_text matched more than once"
-        )
+        raise PatchValidationError("old_text matched more than once")
 
     return first_match
 
@@ -212,9 +228,7 @@ def build_unified_diff(
             line.startswith(("+", "-", " "))
             and not line.startswith(("+++", "---"))
         ):
-            rendered.append(
-                "\\ No newline at end of file\n"
-            )
+            rendered.append("\\ No newline at end of file\n")
 
     return "".join(rendered).rstrip("\r\n")
 
@@ -234,9 +248,7 @@ def create_rotating_backup(
     """
 
     if backup_limit < 1:
-        raise PatchBackupError(
-            "backup_limit must be at least 1"
-        )
+        raise PatchBackupError("backup_limit must be at least 1")
 
     backup_paths = [
         _backup_path(target, generation)
@@ -262,14 +274,8 @@ def create_rotating_backup(
             0,
             -1,
         ):
-            previous = _backup_path(
-                target,
-                generation - 1,
-            )
-            destination = _backup_path(
-                target,
-                generation,
-            )
+            previous = _backup_path(target, generation - 1)
+            destination = _backup_path(target, generation)
 
             if previous.exists():
                 os.replace(previous, destination)
@@ -278,8 +284,7 @@ def create_rotating_backup(
         shutil.copy2(target, primary_backup)
     except OSError as exc:
         raise PatchBackupError(
-            f"could not create rotating backup "
-            f"for {target.name}: {exc}"
+            f"could not create rotating backup for {target.name}: {exc}"
         ) from exc
 
     return primary_backup
@@ -289,12 +294,7 @@ def verify_backup(
     backup: Path,
     expected_source: bytes,
 ) -> None:
-    """
-    Confirm that the backup contains the source that was validated.
-
-    A mismatch means the source changed between the initial read and
-    backup creation, or the backup was not copied correctly.
-    """
+    """Confirm that the backup contains the source that was validated."""
 
     try:
         backup_bytes = backup.read_bytes()
@@ -305,8 +305,7 @@ def verify_backup(
 
     if backup_bytes != expected_source:
         raise PatchSourceChangedError(
-            "source changed before backup verification; "
-            "patch was not written"
+            "source changed before backup verification; patch was not written"
         )
 
 
@@ -315,13 +314,7 @@ def atomic_replace_text(
     new_text: str,
     expected_source: bytes,
 ) -> None:
-    """
-    Write a same-directory temporary file and replace the target.
-
-    The target is reread immediately before replacement. If its contents
-    no longer match the previously validated source, the temporary file
-    is deleted and the replacement is cancelled.
-    """
+    """Write a same-directory temporary file and replace the target."""
 
     temporary_path: Path | None = None
 
@@ -335,29 +328,23 @@ def atomic_replace_text(
         ) as temporary_file:
             temporary_path = Path(temporary_file.name)
 
-            temporary_file.write(
-                new_text.encode("utf-8")
-            )
+            temporary_file.write(new_text.encode("utf-8"))
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
 
-        original_mode = stat.S_IMODE(
-            target.stat().st_mode
-        )
+        original_mode = stat.S_IMODE(target.stat().st_mode)
         os.chmod(temporary_path, original_mode)
 
         try:
             current_source = target.read_bytes()
         except OSError as exc:
             raise PatchWriteError(
-                f"could not re-read {target.name} "
-                f"before replacement: {exc}"
+                f"could not re-read {target.name} before replacement: {exc}"
             ) from exc
 
         if current_source != expected_source:
             raise PatchSourceChangedError(
-                "source changed after validation; "
-                "patch was not written"
+                "source changed after validation; patch was not written"
             )
 
         os.replace(temporary_path, target)
@@ -368,8 +355,7 @@ def atomic_replace_text(
 
     except (OSError, UnicodeError) as exc:
         raise PatchWriteError(
-            f"could not atomically replace "
-            f"{target.name}: {exc}"
+            f"could not atomically replace {target.name}: {exc}"
         ) from exc
 
     finally:
@@ -377,9 +363,132 @@ def atomic_replace_text(
             try:
                 temporary_path.unlink(missing_ok=True)
             except OSError:
-                # The original source remains untouched even if
-                # temporary-file cleanup fails.
                 pass
+
+
+def prepare_patch(
+    settings: Settings,
+    patch: ProposedPatch,
+    *,
+    expected_source_text: str | None = None,
+) -> PreparedPatch:
+    """
+    Prepare, validate, and construct updated text entirely in memory without writing files or backups.
+
+    1. Requires status 'ready'.
+    2. Resolves file relative to allowlist and checks for symlinks.
+    3. Reads current UTF-8 source.
+    4. Compares expected_source_text if supplied.
+    5. Validates old_text occurs exactly once.
+    6. Constructs updated_text in memory.
+    7. Runs deterministic syntax validation on complete updated_text.
+    8. Builds unified diff and computes SHA-256 hashes.
+    """
+
+    relative_name, target = resolve_patch_target(settings, patch)
+
+    if patch.old_text is None or patch.old_text == "":
+        raise PatchValidationError("ready patch old_text is missing")
+
+    if patch.new_text is None:
+        raise PatchValidationError("ready patch new_text is missing")
+
+    if patch.old_text == patch.new_text:
+        raise PatchValidationError("old_text and new_text must be different")
+
+    source_bytes, source_text = read_utf8_source(target, relative_name)
+
+    if expected_source_text is not None and not text_matches_snapshot(
+        source_text, expected_source_text
+    ):
+        raise PatchSourceChangedError(
+            "source changed after it was supplied to the crew; patch was not written"
+        )
+
+    match_index = find_unique_occurrence(source_text, patch.old_text)
+
+    updated_text = (
+        source_text[:match_index]
+        + patch.new_text
+        + source_text[match_index + len(patch.old_text) :]
+    )
+
+    syntax_res = validate_source_syntax(
+        filename=relative_name,
+        content=updated_text,
+        settings=settings,
+    )
+
+    if not syntax_res.valid:
+        issue_msg = (
+            syntax_res.issues[0].message
+            if syntax_res.issues
+            else "invalid syntax"
+        )
+        raise PatchValidationError(
+            f"Syntax validation failed for {relative_name}: {issue_msg}"
+        )
+
+    unified_diff = build_unified_diff(source_text, updated_text, relative_name)
+
+    orig_hash = hashlib.sha256(source_bytes).hexdigest()
+    upd_hash = hashlib.sha256(updated_text.encode("utf-8")).hexdigest()
+
+    return PreparedPatch(
+        file=relative_name,
+        summary=patch.summary,
+        target_path=target,
+        original_text=source_text,
+        updated_text=updated_text,
+        original_sha256=orig_hash,
+        updated_sha256=upd_hash,
+        diff=unified_diff,
+        syntax_validation=syntax_res,
+    )
+
+
+def commit_prepared_patch(
+    settings: Settings,
+    prepared: PreparedPatch,
+) -> PatchApplicationResult:
+    """
+    Commit a previously prepared patch to disk safely.
+
+    1. Re-resolves target relative to allowlist and verifies no symlinks.
+    2. Rereads target source and verifies original_sha256 hash matches.
+    3. Creates rotating backup and verifies it.
+    4. Performs atomic temporary write and replacement.
+    """
+
+    allowed_paths = resolve_allowed_paths(settings)
+    if prepared.file not in allowed_paths:
+        raise PatchValidationError(f"patch file is not allowlisted: {prepared.file}")
+
+    target = allowed_paths[prepared.file]
+
+    if target.is_symlink():
+        raise PatchValidationError("symbolic-link target is not supported")
+
+    source_bytes, source_text = read_utf8_source(target, prepared.file)
+    current_hash = hashlib.sha256(source_bytes).hexdigest()
+
+    if current_hash != prepared.original_sha256:
+        raise PatchSourceChangedError(
+            "Source file changed on disk before write could be committed."
+        )
+
+    backup = create_rotating_backup(target, settings.backup_limit)
+    verify_backup(backup, source_bytes)
+    atomic_replace_text(target, prepared.updated_text, expected_source=source_bytes)
+
+    backup_relative = backup.relative_to(settings.project_root)
+
+    return PatchApplicationResult(
+        file=prepared.file,
+        summary=prepared.summary,
+        backup_file=backup_relative.as_posix(),
+        diff=prepared.diff,
+    )
 
 
 def apply_patch(
@@ -388,97 +497,9 @@ def apply_patch(
     *,
     expected_source_text: str | None = None,
 ) -> PatchApplicationResult:
-    """
-    Validate, back up, and apply one exact unique replacement.
+    """Validate, back up, and apply one exact unique replacement."""
 
-    When expected_source_text is supplied, the current source must still
-    match the snapshot provided to the CrewAI agents. This prevents a patch
-    generated from stale source from being applied.
-
-    Validation and diff construction happen before backup creation.
-    Source writing happens only after the backup has been verified.
-    """
-
-    relative_name, target = resolve_patch_target(
-        settings,
-        patch,
+    prepared = prepare_patch(
+        settings, patch, expected_source_text=expected_source_text
     )
-
-    # These checks intentionally repeat model validation at the final
-    # deterministic write boundary.
-    if patch.old_text is None or patch.old_text == "":
-        raise PatchValidationError(
-            "ready patch old_text is missing"
-        )
-
-    if patch.new_text is None:
-        raise PatchValidationError(
-            "ready patch new_text is missing"
-        )
-
-    if patch.old_text == patch.new_text:
-        raise PatchValidationError(
-            "old_text and new_text must be different"
-        )
-    source_bytes, source_text = read_utf8_source(
-    target,
-    relative_name,
-)
-
-    if (
-        expected_source_text is not None
-        and not text_matches_snapshot(
-            source_text,
-            expected_source_text,
-        )
-    ):
-        raise PatchSourceChangedError(
-            "source changed after it was supplied to the crew; "
-            "patch was not written"
-        )
-
-    match_index = find_unique_occurrence(
-        source_text,
-        patch.old_text,
-    )
-
-    updated_text = (
-        source_text[:match_index]
-        + patch.new_text
-        + source_text[
-            match_index + len(patch.old_text) :
-        ]
-    )
-
-    unified_diff = build_unified_diff(
-        source_text,
-        updated_text,
-        relative_name,
-    )
-
-    backup = create_rotating_backup(
-        target,
-        settings.backup_limit,
-    )
-
-    verify_backup(
-        backup,
-        source_bytes,
-    )
-
-    atomic_replace_text(
-        target,
-        updated_text,
-        expected_source=source_bytes,
-    )
-
-    backup_relative = backup.relative_to(
-        settings.project_root
-    )
-
-    return PatchApplicationResult(
-        file=relative_name,
-        summary=patch.summary,
-        backup_file=backup_relative.as_posix(),
-        diff=unified_diff,
-    )
+    return commit_prepared_patch(settings, prepared)
