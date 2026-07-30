@@ -66,11 +66,11 @@ def test_automatic_mode_preserves_current_behavior(tmp_path: Path) -> None:
     (tmp_path / "style.css").write_text("body { color: black; }", encoding="utf-8")
     settings = Settings(project_root=tmp_path, patch_mode="automatic")
 
-    loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Old Title</h1>", target="h1")
+    loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Old Title</h1>", target="h1", message="OK")
     pat = ProposedPatch(status="ready", file="index.html", old_text="<h1>Old Title</h1>", new_text="<h1>New Title</h1>", target="h1", summary="Edit h1")
     out = FakeCrewOutput(pydantic=pat, tasks_output=[FakeTaskOutput(loc), FakeTaskOutput(pat)])
 
-    session = SessionState()
+    session = SessionState(history_limit=5)
     sources = {"index.html": SAMPLE_HTML, "style.css": "body { color: black; }"}
 
     res = process_turn(
@@ -87,11 +87,11 @@ def test_automatic_mode_preserves_current_behavior(tmp_path: Path) -> None:
 
 
 def test_preview_mode_creates_preview_ready_result(preview_settings: Settings) -> None:
-    loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Old Title</h1>", target="h1")
+    loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Old Title</h1>", target="h1", message="OK")
     pat = ProposedPatch(status="ready", file="index.html", old_text="<h1>Old Title</h1>", new_text="<h1>New Title</h1>", target="h1", summary="Edit h1")
     out = FakeCrewOutput(pydantic=pat, tasks_output=[FakeTaskOutput(loc), FakeTaskOutput(pat)])
 
-    session = SessionState()
+    session = SessionState(history_limit=5)
     sources = {"index.html": SAMPLE_HTML, "style.css": "body { color: black; }"}
 
     res = process_turn(
@@ -113,23 +113,17 @@ def test_preview_mode_creates_preview_ready_result(preview_settings: Settings) -
     assert session.successful_turn_count == 0
 
 
-def test_preview_state_manager() -> None:
+def test_preview_state_manager(preview_settings: Settings) -> None:
     state = PreviewState()
     assert state.has_pending() is False
 
-    pat = ProposedPatch(status="ready", file="index.html", old_text="a", new_text="b", summary="s")
-    # mock prepared patch
-    mock_prepared = prepare_patch(
-        Settings(project_root=Path(".")),
-        pat,
-        expected_source_text=None,
-    ) if False else None
+    pat = ProposedPatch(status="ready", file="index.html", old_text="<h1>Old Title</h1>", new_text="<h1>New Title</h1>", target="h1", summary="Edit h1")
+    prepared = prepare_patch(preview_settings, pat)
 
-    # test PendingPreview setting
     pending = PendingPreview(
-        instruction="Edit",
+        instruction="Edit title",
         patch=pat,
-        prepared_patch=mock_prepared, # type: ignore
+        prepared_patch=prepared,
         created_for_file="index.html",
     )
 
@@ -145,11 +139,11 @@ def test_preview_state_manager() -> None:
 
 
 def test_apply_commits_preview_and_updates_memory(preview_settings: Settings) -> None:
-    loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Old Title</h1>", target="h1")
+    loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Old Title</h1>", target="h1", message="OK")
     pat = ProposedPatch(status="ready", file="index.html", old_text="<h1>Old Title</h1>", new_text="<h1>New Title</h1>", target="h1", summary="Edit h1")
     out = FakeCrewOutput(pydantic=pat, tasks_output=[FakeTaskOutput(loc), FakeTaskOutput(pat)])
 
-    session = SessionState()
+    session = SessionState(history_limit=5)
     sources = {"index.html": SAMPLE_HTML, "style.css": "body { color: black; }"}
 
     res = process_turn(
@@ -162,7 +156,6 @@ def test_apply_commits_preview_and_updates_memory(preview_settings: Settings) ->
 
     assert res.prepared_patch is not None
 
-    # Commit prepared patch
     app_res = commit_prepared_patch(preview_settings, res.prepared_patch)
     session.record_success("Change title", pat)
 
@@ -173,11 +166,11 @@ def test_apply_commits_preview_and_updates_memory(preview_settings: Settings) ->
 
 
 def test_stale_preview_rejection(preview_settings: Settings) -> None:
-    loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Old Title</h1>", target="h1")
+    loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Old Title</h1>", target="h1", message="OK")
     pat = ProposedPatch(status="ready", file="index.html", old_text="<h1>Old Title</h1>", new_text="<h1>New Title</h1>", target="h1", summary="Edit h1")
     out = FakeCrewOutput(pydantic=pat, tasks_output=[FakeTaskOutput(loc), FakeTaskOutput(pat)])
 
-    session = SessionState()
+    session = SessionState(history_limit=5)
     sources = {"index.html": SAMPLE_HTML, "style.css": "body { color: black; }"}
 
     res = process_turn(
