@@ -115,7 +115,7 @@ def print_banner(settings: Settings) -> None:
     )
     print()
     print(
-        "Phase 6 mode: conversational editing "
+        "Mode: conversational editing "
         "with resilient error handling"
     )
     print(
