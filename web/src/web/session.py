@@ -17,6 +17,10 @@ from web.orchestration import (
     TurnResult,
     process_turn,
 )
+from web.preview import (
+    PendingPreview,
+    PreviewState,
+)
 from web.settings import (
     Settings,
     resolve_allowed_paths,
@@ -28,11 +32,16 @@ from web.tools.patcher import (
     PatchSourceChangedError,
     PatchValidationError,
     PatchWriteError,
+    commit_prepared_patch,
+)
+from web.tools.undo import (
+    UndoError,
+    perform_undo,
 )
 
 
 EXIT_COMMANDS = {"exit", "quit"}
-CANCEL_COMMANDS = {"cancel"}
+CANCEL_COMMANDS = {"cancel", ":cancel"}
 
 
 class SourceReadError(RuntimeError):
@@ -104,15 +113,64 @@ def print_banner(settings: Settings) -> None:
     print(f"Allowed files: {', '.join(settings.allowed_files)}")
     print(f"Groq: {groq_status}")
     print(f"Model: {model_name}")
+    print(f"Patch mode: {settings.patch_mode}")
+    print(
+        f"Syntax validation: {'enabled' if settings.syntax_validation_enabled else 'disabled'}"
+    )
     print(
         f"Session memory limit: {settings.session_history_limit} successful turns"
     )
     print()
     print("Mode: conversational editing with resilient error handling")
-    print(
-        "Valid patches are applied automatically without an approval prompt."
+    print("Type an editing instruction, or type ':status', ':undo', 'exit'.")
+    print()
+
+
+def print_status(
+    settings: Settings,
+    session_state: SessionState,
+    clarification_mgr: ClarificationManager,
+    preview_state: PreviewState,
+) -> None:
+    """Print safe system status without exposing secrets or code snippets."""
+
+    groq_status = (
+        "configured" if settings.llm_is_configured else "not configured"
     )
-    print("Type an editing instruction, or type 'exit' or 'quit'.")
+    gemini_status = (
+        "enabled" if settings.gemini_cli_enabled else "disabled"
+    )
+    pending_preview = preview_state.get_pending()
+    preview_info = (
+        f"pending ({pending_preview.created_for_file})"
+        if pending_preview
+        else "none"
+    )
+    last_file = (
+        session_state.last_target.file if session_state.last_target else "none"
+    )
+
+    print()
+    print("System Status")
+    print("-------------")
+    print(f"Patch mode: {settings.patch_mode}")
+    print(
+        f"Syntax validation: {'enabled' if settings.syntax_validation_enabled else 'disabled'}"
+    )
+    print(
+        f"  - HTML validation: {'enabled' if settings.html_validation_enabled else 'disabled'}"
+    )
+    print(
+        f"  - CSS validation: {'enabled' if settings.css_validation_enabled else 'disabled'}"
+    )
+    print(f"Groq: {groq_status}")
+    print(f"Gemini CLI patch reviewer: {gemini_status}")
+    print(f"Clarification pending: {clarification_mgr.has_pending()}")
+    print(f"Preview pending: {preview_info}")
+    print(
+        f"Successful turns retained: {session_state.successful_turn_count}/{settings.session_history_limit}"
+    )
+    print(f"Last edited file: {last_file}")
     print()
 
 
@@ -147,6 +205,36 @@ def print_clarification_request(
     print()
     print("Enter an option number or target label.")
     print("Type 'cancel' to cancel this clarification.")
+    print()
+
+
+def print_preview_ready(
+    result: TurnResult,
+) -> None:
+    """Print a prepared preview before user apply/cancel decision."""
+
+    print()
+    print(f"Preview ready for: {result.file}")
+    print(f"Summary: {result.summary}")
+
+    if (
+        result.prepared_patch
+        and result.prepared_patch.syntax_validation
+    ):
+        syn = result.prepared_patch.syntax_validation
+        print(
+            f"Syntax validation: {syn.language.upper()} syntax {'valid' if syn.valid else 'INVALID'}"
+        )
+
+    print()
+    print("Diff:")
+    if result.diff:
+        print(result.diff)
+    else:
+        print("(No diff text was generated.)")
+
+    print()
+    print("Type ':apply' to apply this patch, or ':cancel' to discard it.")
     print()
 
 
@@ -279,18 +367,163 @@ def execute_turn_with_sources(
         return None
 
 
+def handle_colon_command(
+    command_line: str,
+    settings: Settings,
+    session_state: SessionState,
+    clarification_mgr: ClarificationManager,
+    preview_state: PreviewState,
+) -> bool:
+    """
+    Parse and execute a colon command e.g. :status, :preview, :apply, :cancel, :undo.
+
+    Returns True if handled, False if unhandled.
+    """
+
+    parts = command_line.strip().split()
+    cmd = parts[0].casefold() if parts else ""
+
+    if cmd == ":status":
+        print_status(settings, session_state, clarification_mgr, preview_state)
+        return True
+
+    if cmd == ":preview":
+        pending = preview_state.get_pending()
+        if pending:
+            print()
+            print(f"Pending preview for: {pending.created_for_file}")
+            print(f"Summary: {pending.prepared_patch.summary}")
+            print("Diff:")
+            print(pending.prepared_patch.diff)
+            print()
+            print("Type ':apply' to commit this change, or ':cancel' to discard it.")
+            print()
+        else:
+            print("No preview is currently pending.")
+            print()
+        return True
+
+    if cmd == ":apply":
+        if clarification_mgr.has_pending():
+            print(
+                "A clarification is currently pending. Cancel it before applying a preview."
+            )
+            print()
+            return True
+
+        pending = preview_state.get_pending()
+        if not pending:
+            print("No preview is currently pending.")
+            print()
+            return True
+
+        try:
+            app_res = commit_prepared_patch(settings, pending.prepared_patch)
+            session_state.record_success(
+                pending.instruction, pending.patch
+            )
+            preview_state.clear()
+
+            print()
+            print(f"Applied preview: {app_res.summary}")
+            print(f"File: {app_res.file}")
+            print(f"Backup: {app_res.backup_file}")
+            print()
+            print("Diff:")
+            print(app_res.diff)
+            print()
+        except PatchSourceChangedError as exc:
+            print(f"Stale preview rejected: {exc}")
+            preview_state.clear()
+            print("The pending preview was discarded due to source mismatch.")
+            print()
+        except PatchError as exc:
+            print(f"Apply failed: {exc}")
+            print()
+
+        return True
+
+    if cmd == ":cancel" or cmd == "cancel":
+        if clarification_mgr.has_pending():
+            clarification_mgr.cancel()
+            print("Clarification cancelled.")
+            print()
+        elif preview_state.has_pending():
+            preview_state.clear()
+            print("Preview cancelled.")
+            print()
+        else:
+            print("No active clarification or preview to cancel.")
+            print()
+        return True
+
+    if cmd == ":undo":
+        if clarification_mgr.has_pending():
+            print(
+                "Cannot perform undo while a clarification is pending. Type 'cancel' first."
+            )
+            print()
+            return True
+
+        if preview_state.has_pending():
+            print(
+                "Cannot perform undo while a preview is pending. Type ':cancel' first."
+            )
+            print()
+            return True
+
+        target_file: str | None = None
+        if len(parts) > 1:
+            target_file = parts[1]
+        elif session_state.last_target:
+            target_file = session_state.last_target.file
+
+        if not target_file:
+            print(
+                "No recent edit in session history. Please specify a file e.g. ':undo index.html'."
+            )
+            print()
+            return True
+
+        try:
+            undo_res = perform_undo(settings, target_file)
+            print()
+            print(f"Undo completed: {undo_res.summary}")
+            print(f"File: {undo_res.file}")
+            print(f"New backup: {undo_res.backup_file}")
+            print()
+            print("Reverse Diff:")
+            print(undo_res.diff)
+            print()
+        except UndoError as exc:
+            print(f"Undo failed: {exc}")
+            print()
+
+        return True
+
+    print(
+        f"Unknown command: {parts[0]}. Type ':status' for system info or enter an editing instruction."
+    )
+    print()
+    return True
+
+
 def run_session(settings: Settings) -> None:
-    """Run the long-lived conversational editing session with clarification support."""
+    """Run the long-lived conversational editing session with Phase 10 capabilities."""
 
     session_state = SessionState(history_limit=settings.session_history_limit)
     clarification_mgr = ClarificationManager()
+    preview_state = PreviewState()
 
     print_banner(settings)
 
     while True:
-        prompt = (
-            "clarify> " if clarification_mgr.has_pending() else "web-editor> "
-        )
+        if clarification_mgr.has_pending():
+            prompt = "clarify> "
+        elif preview_state.has_pending():
+            prompt = "preview> "
+        else:
+            prompt = "web-editor> "
 
         try:
             user_input = input(prompt).strip()
@@ -302,6 +535,9 @@ def run_session(settings: Settings) -> None:
             if clarification_mgr.has_pending():
                 clarification_mgr.cancel()
                 print("Clarification cancelled.")
+            elif preview_state.has_pending():
+                preview_state.clear()
+                print("Preview cancelled.")
             else:
                 print(
                     "Instruction cancelled. Type 'exit' to close the session."
@@ -314,6 +550,29 @@ def run_session(settings: Settings) -> None:
         if user_input.casefold() in EXIT_COMMANDS:
             print("Session closed.")
             return
+
+        if user_input.startswith(":"):
+            handle_colon_command(
+                user_input,
+                settings,
+                session_state,
+                clarification_mgr,
+                preview_state,
+            )
+            continue
+
+        if preview_state.has_pending():
+            if user_input.casefold() in CANCEL_COMMANDS:
+                preview_state.clear()
+                print("Preview cancelled.")
+                print()
+                continue
+
+            print(
+                "A preview is currently pending. Type ':apply' to commit it or ':cancel' to discard it."
+            )
+            print()
+            continue
 
         if clarification_mgr.has_pending():
             if user_input.casefold() in CANCEL_COMMANDS:
@@ -363,6 +622,17 @@ def run_session(settings: Settings) -> None:
 
             if result.status == "applied":
                 print_application(result)
+            elif result.status == "preview_ready":
+                if result.prepared_patch:
+                    preview_state.set_pending(
+                        PendingPreview(
+                            instruction=clarified_instruction,
+                            patch=result.prepared_patch, # type: ignore
+                            prepared_patch=result.prepared_patch,
+                            created_for_file=result.file or "",
+                        )
+                    )
+                print_preview_ready(result)
             elif result.status == "needs_clarification":
                 if result.clarification_request:
                     clarification_mgr.set_pending(
@@ -384,6 +654,17 @@ def run_session(settings: Settings) -> None:
 
             if result.status == "applied":
                 print_application(result)
+            elif result.status == "preview_ready":
+                if result.prepared_patch:
+                    preview_state.set_pending(
+                        PendingPreview(
+                            instruction=user_input,
+                            patch=result.prepared_patch, # type: ignore
+                            prepared_patch=result.prepared_patch,
+                            created_for_file=result.file or "",
+                        )
+                    )
+                print_preview_ready(result)
             elif result.status == "needs_clarification":
                 if result.clarification_request:
                     clarification_mgr.set_pending(
