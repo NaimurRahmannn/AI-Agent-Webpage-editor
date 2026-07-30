@@ -1,6 +1,6 @@
 # CrewAI Conversational HTML/CSS Editing Agent
 
-A specialized, local-first conversational CLI editing agent built with Python, CrewAI, Pydantic, Groq, an embedded read-only Gemini CLI patch reviewer, and interactive conversational clarification workflows. The agent accepts natural language editing requests in a long-running terminal session and applies exact, single-file HTML or CSS modifications deterministically.
+A specialized, local-first conversational CLI editing agent built with Python, CrewAI, Pydantic, Groq, an embedded read-only Gemini CLI patch reviewer, interactive clarification workflows, deterministic HTML/CSS syntax validation (`html5lib` & `tinycss2`), patch preview mode, and safe undo capabilities.
 
 ---
 
@@ -9,6 +9,7 @@ A specialized, local-first conversational CLI editing agent built with Python, C
 - [Overview](#overview)
 - [Scope & Exclusions](#scope--exclusions)
 - [Architecture](#architecture)
+- [Phase 10: Preview, Validation & Recovery](#phase-10-preview-validation--recovery)
 - [Conversational Clarification Workflow (Phase 9)](#conversational-clarification-workflow-phase-9)
 - [Gemini CLI Patch Reviewer (Phase 8)](#gemini-cli-patch-reviewer-phase-8)
 - [Per-Turn Execution Flow](#per-turn-execution-flow)
@@ -16,9 +17,7 @@ A specialized, local-first conversational CLI editing agent built with Python, C
 - [Requirements](#requirements)
 - [Setup & Installation](#setup--installation)
 - [Environment Configuration](#environment-configuration)
-- [Model Selection](#model-selection)
-- [Usage](#usage)
-- [Conversational Editing & Memory](#conversational-editing--memory)
+- [REPL Colon Commands](#repl-colon-commands)
 - [Safety Guarantees](#safety-guarantees)
 - [Testing](#testing)
 - [Restoring Workspace](#restoring-workspace)
@@ -32,42 +31,21 @@ The **CrewAI Conversational HTML/CSS Editing Agent** provides a terminal REPL lo
 
 Unlike unconstrained code-generation assistants, this project operates under strict safety and determinism boundaries:
 - **Two-Agent Crew**: A **Locator** agent finds the target file and exact source substring; an **Editor** agent produces a single precise replacement patch.
+- **Deterministic Syntax Validation**: Python parses complete resulting HTML (`html5lib`) and CSS (`tinycss2`) documents before backup or write.
+- **Preview & Automatic Modes**: `PATCH_MODE=preview` displays validated diffs for user confirmation via `:apply` or `:cancel`.
+- **Safe Undo**: `:undo` restores previous source file versions from rotating backups using atomic replacement and reverse diffs.
 - **Conversational Clarification Workflow**: Interactive disambiguation prompts when an instruction matches multiple candidate elements.
-- **Embedded Read-Only Gemini Reviewer**: An optional Gemini CLI tool reviews candidate patches in read-only plan mode before editor confirmation.
-- **Deterministic Validation & Execution**: Python validates all structural and path constraints, generates rotating backups (`.bak`), applies atomic writes, and renders unified diffs.
+- **Embedded Read-Only Gemini Reviewer**: An optional Gemini CLI tool reviews candidate patches in read-only plan mode (`--approval-mode plan`).
 - **Strict Structured Outputs**: Pydantic models strictly enforce data shapes and prohibit arbitrary LLM text formats.
-- **Local-First & Reread Source**: Workspace HTML/CSS files are reread directly from disk on every single turn to maintain the true file state.
-
----
-
-## Scope & Exclusions
-
-### In-Scope Capabilities
-- Direct single-turn HTML edits (text content, attribute values, tags).
-- Direct single-turn CSS edits (property values, selectors, declarations).
-- Conversational follow-up requests ("Make it bigger", "Change the same button again", "Even darker").
-- Interactive clarification flow for ambiguous requests with candidate targets.
-- Advisory read-only patch reviewing via embedded Gemini CLI (`--approval-mode plan`).
-- Rejection of ambiguous, out-of-scope, or dangerous instructions with clear user feedback.
-- Automatic rotating file backup creation (`index.html.bak`, `index.html.bak.1`).
-- Unified diff output display for applied edits.
-
-### Explicit Exclusions
-- **No JavaScript support**: JavaScript files (`.js`) and inline event handlers are strictly out of scope and rejected without clarification.
-- **No multi-file edits**: Exactly one file is edited per turn. Requests spanning multiple files are rejected.
-- **No visual rendering or browser automation**: Execution is terminal-based without browser drivers or DOM layout calculation.
-- **No unconstrained code generation**: All edits must match existing source content exactly.
-- **No filesystem writes during clarification**: No files are modified while a clarification is pending.
+- **Local-First & Reread Source**: Workspace HTML/CSS files are reread directly from disk on every single turn.
 
 ---
 
 ## Architecture
 
-The project follows a modular, pipeline-based design:
-
 ```mermaid
 flowchart TD
-    User([User Terminal REPL]) -->|Instruction| Session[Session Loop / REPL]
+    User([User Terminal REPL]) -->|Instruction / Colon Command| Session[Session Loop / REPL]
     Session -->|Reread Files + Build Memory Context| Orchestration[Orchestration Core]
     Orchestration -->|Execute Sequential Crew| Crew[CrewAI Process]
     
@@ -89,125 +67,94 @@ flowchart TD
     ClarifyMode -->|User Selection| Session
 
     Crew --> Validation
-    Validation -->|Passes Strict Rules| Patcher[Deterministic Patcher]
+    Validation -->|1. Exact Match Validation| Prepare[Prepare Patch In Memory]
+    Prepare -->|2. Deterministic Syntax Validation html5lib / tinycss2| SyntaxCheck{Valid Syntax?}
     
-    Patcher -->|1. Validate Source Snapshot| Disk[(Workspace Files)]
-    Patcher -->|2. Create Rotating Backup| Disk
-    Patcher -->|3. Atomic Text Replace| Disk
-    Patcher -->|4. Return Unified Diff| Session
+    SyntaxCheck -->|Invalid| AbortTurn[Abort Turn: No Backup, No Write]
+    SyntaxCheck -->|Valid| ModeCheck{PATCH_MODE}
+
+    ModeCheck -->|automatic| Patcher[Deterministic Patcher: Backup + Atomic Write]
+    ModeCheck -->|preview| PreviewMode[Store Pending Preview -> 'preview> ']
+
+    PreviewMode -->|:apply| Patcher
+    PreviewMode -->|:cancel| Session
+
     Patcher --> RecordMemory[Update Session State Memory]
+    
+    Session -->|:undo| UndoTool[Safe Undo Tool: Restore .bak via Atomic Write]
 ```
 
 ---
 
-## Conversational Clarification Workflow (Phase 9)
+## Phase 10: Preview, Validation & Recovery
 
-### Objective & Behavior
-When an instruction is ambiguous because multiple elements could match (e.g., "Change the link text" when multiple links exist), the agent enters clarification mode:
+### 1. Deterministic Syntax Validation
+- **HTML**: Complete resulting HTML parsed with `html5lib`. Catches malformed tags, duplicate attributes, and structural errors.
+- **CSS**: Complete resulting CSS parsed with `tinycss2`. Inspects rules, `@media` queries, `@supports`, and declarations.
+- **Validation-Before-Backup Guarantee**: Syntax validation runs on the complete updated source *in memory* before any backup file or write operation occurs.
 
-```text
-web-editor> Change the link text.
+### 2. Patch Preview Mode (`PATCH_MODE=preview`)
+When `PATCH_MODE=preview` is enabled:
+- Candidate patches are prepared, syntax-validated, and displayed as unified diffs.
+- Prompt switches to `preview> `.
+- Typing `:apply` commits the prepared patch to disk, creates the `.bak` backup, and records successful memory.
+- Typing `:cancel` discards the preview without touching files.
 
-Which link should I change?
-1. Brand link: Weft Studio
-2. Navigation link: Work
-3. CTA link: Start a project
-
-Enter an option number or target label.
-Type 'cancel' to cancel this clarification.
-
-clarify> 3
-
-Resolved clarification:
-  Original request: Change the link text.
-  Selected target: CTA link: Start a project
-
-Rereading current files and running the editing crew...
-Applied: Change the CTA link text.
-File: index.html
-Backup: index.html.bak
-Diff:
-...
-```
-
-### Safety Rules & Guarantees
-- **No Files Written During Clarification**: Source files and backups are untouched until a unique target is resolved and validated.
-- **Reread & Rerun**: Selecting an option triggers a fresh reread of files from disk and reruns the locator/editor crew with a clarified instruction.
-- **Memory Separation**: Clarification state is process-local and kept separate from successful turn history.
-- **Unsupported Requests Not Clarified**: JavaScript, broad redesigns, multi-file edits, and disallowed paths remain `unsupported` and are rejected directly without entering clarification.
-- **`cancel` Command**: Typing `cancel` at the `clarify> ` prompt clears pending clarification and returns to normal `web-editor> ` mode.
-- **Max Attempts**: Up to 3 invalid selection attempts are allowed before clarification auto-cancels.
+### 3. Safe Undo (`:undo`)
+- Restores an allowlisted HTML/CSS file from its newest rotating backup (`.bak`).
+- Rotates existing backups so pre-undo source becomes the new `.bak` (allowing undoing an undo).
+- Displays a reverse unified diff.
+- Runs 100% deterministically without calling LLMs or external services.
 
 ---
 
-## Gemini CLI Patch Reviewer (Phase 8)
+## REPL Colon Commands
 
-### Read-Only Plan Mode Guarantee
-When `GEMINI_CLI_ENABLED=true`, the Editor agent invokes `GeminiCliReviewTool` using:
-```bash
-gemini --model <configured model> --approval-mode plan --output-format json --prompt <fixed prompt>
-```
-- Operates strictly in read-only plan mode (`--approval-mode plan`).
-- Runs only after clarification resolves a unique located target and candidate patch.
-- Python remains the single authoritative writer.
+| Command | Description |
+| :--- | :--- |
+| `:status` | Displays patch mode, syntax validation status, clarification/preview state, and retained turns without exposing secrets. |
+| `:preview` | Displays the current pending preview diff and summary. |
+| `:apply` | Commits the pending preview patch to disk. |
+| `:cancel` | Cancels pending clarification or preview mode. |
+| `:undo [file]` | Restores an allowlisted file from its newest backup (e.g. `:undo index.html` or `:undo`). |
 
 ---
 
-## Repository Structure
+## Environment Configuration
 
-```
-.
-├── src/
-│   └── web/
-│       ├── __init__.py
-│       ├── main.py            # CLI entry point (`web`)
-│       ├── session.py         # Terminal REPL loop with clarify> prompt
-│       ├── orchestration.py   # Turn processing and crew execution wrapper
-│       ├── clarification.py   # Process-local clarification state manager (Phase 9)
-│       ├── crew.py            # CrewAI Agents and Tasks configuration
-│       ├── models.py          # Pydantic schemas (LocatorResult, ProposedPatch, ClarificationRequest)
-│       ├── state.py           # SessionState memory and history limit
-│       ├── settings.py        # Environment & pydantic-settings config
-│       ├── tools/
-│       │   ├── __init__.py
-│       │   ├── gemini_cli_tool.py # Read-only Gemini CLI patch reviewer tool
-│       │   └── patcher.py     # Deterministic backup, diff & atomic replace
-│       └── workspace/         # Default target web workspace
-│           ├── index.html
-│           └── style.css
-├── tests/
-│   ├── test_clarification.py            # Phase 9 unit tests
-│   ├── test_clarification_integration.py# Phase 9 integration tests
-│   ├── test_crew.py
-│   ├── test_gemini_cli_integration.py # Phase 8 integration tests
-│   ├── test_gemini_cli_tool.py        # Phase 8 tool & settings tests
-│   ├── test_integration.py   # End-to-end mocked integration tests
-│   ├── test_models.py
-│   ├── test_orchestration.py
-│   ├── test_patcher.py
-│   ├── test_reliability.py
-│   ├── test_session.py
-│   ├── test_settings.py
-│   ├── test_state.py
-│   └── test_validation.py
-├── .env.example               # Template environment configuration
-├── pyproject.toml             # Project setup and dependencies
-├── DEMO.md                    # Supervisor demonstration script
-└── README.md                  # Project documentation
+Updated `.env` settings:
+
+```env
+GROQ_API_KEY=gsk_your_actual_groq_api_key_here
+GROQ_MODEL=groq/llama-3.3-70b-versatile
+PROJECT_ROOT=src/web/workspace
+ALLOWED_FILES=index.html,style.css
+BACKUP_LIMIT=3
+SESSION_HISTORY_LIMIT=5
+
+# Gemini CLI read-only patch reviewer settings (Phase 8)
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_CLI_ENABLED=true
+
+# Phase 10: Preview mode and syntax validation settings
+PATCH_MODE=automatic
+SYNTAX_VALIDATION_ENABLED=true
+HTML_VALIDATION_ENABLED=true
+CSS_VALIDATION_ENABLED=true
 ```
 
 ---
 
 ## Testing
 
-Run all unit and integration tests (149+ tests, 100% mocked LLM calls):
+Run all unit and integration tests (180+ tests, 100% mocked LLM calls):
 
 ```bash
-uv run pytest tests/ -v
+python -m pytest tests/ -v
 ```
 
-Run Phase 9 clarification tests only:
+Run Phase 10 tests only:
 
 ```bash
-uv run pytest tests/test_clarification.py tests/test_clarification_integration.py -v
+python -m pytest tests/test_syntax_validator.py tests/test_preview.py tests/test_undo.py tests/test_phase10_integration.py -v
 ```

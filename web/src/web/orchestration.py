@@ -20,6 +20,7 @@ from web.state import SessionState
 from web.tools.patcher import (
     PatchApplicationResult,
     PreparedPatch,
+    apply_patch,
     commit_prepared_patch,
     prepare_patch,
 )
@@ -293,6 +294,7 @@ def process_turn(
     instruction: str,
     sources: Mapping[str, str],
     crew_executor: CrewExecutor = execute_crew,
+    patch_applier: PatchApplier = apply_patch,
 ) -> TurnResult:
     """
     Execute one complete conversational editing turn.
@@ -353,6 +355,21 @@ def process_turn(
     if patch.file not in sources:
         raise CrewOutputError(
             "ready patch refers to a file absent from the current source snapshot"
+        )
+
+    if patch_applier is not apply_patch:
+        application = patch_applier(
+            settings,
+            patch,
+            expected_source_text=sources[patch.file],
+        )
+        session_state.record_success(instruction, patch)
+        return TurnResult(
+            status="applied",
+            summary=application.summary,
+            file=application.file,
+            backup_file=application.backup_file,
+            diff=application.diff,
         )
 
     prepared = prepare_patch(

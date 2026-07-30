@@ -1,6 +1,6 @@
-# Supervisor Demonstration Script (DEMO.md) — Phase 9
+# Supervisor Demonstration Script (DEMO.md) — Phase 10
 
-This document provides a supervisor-ready, step-by-step demonstration walkthrough for the **CrewAI Conversational HTML/CSS Editing Agent with Conversational Clarification Workflows**.
+This document provides a supervisor-ready, step-by-step demonstration walkthrough for the **CrewAI Conversational HTML/CSS Editing Agent with Patch Preview, Deterministic Syntax Validation, and Safe Undo**.
 
 ---
 
@@ -10,136 +10,137 @@ This document provides a supervisor-ready, step-by-step demonstration walkthroug
 # Navigate to web directory
 cd web
 
-# Verify clean workspace state (no backup files)
-git status src/web/workspace/
+# Set PATCH_MODE=preview in .env or environment
+export PATCH_MODE=preview
 
-# Verify test suite
-uv run pytest tests/ -v
+# Verify test suite passes
+python -m pytest tests/ -v
 ```
 
 ---
 
-## 2. Architecture & Workflow Overview for Supervisor
-
-| Stage | Action | Safety Guarantee |
-| :--- | :--- | :--- |
-| **Initial Ambiguous Turn** | Locator identifies multiple link/button targets and returns `ClarificationRequest`. | **No source changes. No backup files. No Gemini CLI calls.** |
-| **Clarification Prompt** | System displays numbered candidate options and switches prompt to `clarify> `. | Process-local state. Bounded to 3 attempts. `cancel` available. |
-| **User Selection** | User types option number (`5`) or label (`CTA link`). | Selection is advisory. Python rereads current files fresh from disk. |
-| **Locator Rerun** | Locator relocates selected target in the latest source files. | Locator must return `status: located` before patch generation. |
-| **Gemini Review** | Advisory Gemini CLI review runs in read-only plan mode (`--approval-mode plan`). | Reviewer is read-only. Python remains sole file writer. |
-| **Patcher Execution** | Python validates 1-match criteria, creates `.bak` backup, applies atomic write, and prints unified diff. | Memory updated only after atomic write succeeds. |
-
----
-
-## 3. Live Demonstration Workflow
+## 2. Live Demonstration Workflow
 
 Launch the agent REPL:
 
 ```bash
-uv run web
+python -m web.main
 ```
 
 ---
 
-### Step 1: Ambiguous Instruction & Clarification Prompt
+### Step 1: System Status Inspection (`:status`)
 
-**Input Prompt:**
+**Input:**
 ```text
-web-editor> Change the link text.
+web-editor> :status
 ```
 
 **Expected Output:**
 ```text
-Which link should I change?
-1. Brand link: Weft Studio
-2. Navigation link: Work
-3. Navigation link: About
-4. CTA link: Start a project
-
-Enter an option number or target label.
-Type 'cancel' to cancel this clarification.
-
-clarify> 
+System Status
+-------------
+Patch mode: preview
+Syntax validation: enabled
+  - HTML validation: enabled
+  - CSS validation: enabled
+Groq: configured
+Gemini CLI patch reviewer: enabled
+Clarification pending: False
+Preview pending: none
+Successful turns retained: 0/5
+Last edited file: none
 ```
-
-**Supervisor Note**: Observe that the prompt changed to `clarify> ` and no source files or backups were created.
 
 ---
 
-### Step 2: Selecting an Option & Deterministic Patch Application
+### Step 2: Edit Instruction in Preview Mode
 
-**Input at `clarify>` prompt:**
+**Input:**
 ```text
-clarify> 4
+web-editor> Change the title heading to Weft Studio Platform
 ```
 
 **Expected Output:**
 ```text
-Resolved clarification:
-  Original request: Change the link text.
-  Selected target: CTA link: Start a project
+Reread 2 configured file(s) from disk (2842 characters).
+Running locator and editor agents...
 
-Rereading current files and running the editing crew...
+Preview ready for: index.html
+Summary: Change title heading to Weft Studio Platform
+Syntax validation: HTML syntax valid
 
-Applied: Change the CTA link text to Contact Us.
+Diff:
+--- a/index.html
++++ b/index.html
+@@ -12,1 +12,1 @@
+-  <h1>Weft Studio</h1>
++  <h1>Weft Studio Platform</h1>
+
+Type ':apply' to apply this patch, or ':cancel' to discard it.
+
+preview> 
+```
+
+**Supervisor Note**: Observe that prompt changed to `preview> `, the diff is displayed, syntax was validated, but no source file or `.bak` backup file was written yet.
+
+---
+
+### Step 3: Committing the Preview Patch (`:apply`)
+
+**Input at `preview>` prompt:**
+```text
+preview> :apply
+```
+
+**Expected Output:**
+```text
+Applied preview: Change title heading to Weft Studio Platform
 File: index.html
 Backup: index.html.bak
 
 Diff:
 --- a/index.html
 +++ b/index.html
-@@ -19,1 +19,1 @@
--      <a class="cta" href="#contact">Start a project</a>
-+      <a class="cta" href="#contact">Contact Us</a>
-```
-
----
-
-### Step 3: Cancelling a Clarification Request
-
-**Input Prompt:**
-```text
-web-editor> Make the text bigger.
-```
-
-**Output:**
-```text
-Which element should I change?
-1. Hero heading text
-2. Hero copy text
-3. CTA button text
-
-clarify> cancel
-
-Clarification cancelled.
+@@ -12,1 +12,1 @@
+-  <h1>Weft Studio</h1>
++  <h1>Weft Studio Platform</h1>
 
 web-editor> 
 ```
 
-**Supervisor Note**: Typing `cancel` clears pending clarification and safely returns prompt to `web-editor> `.
+**Supervisor Note**: File `index.html` has now been modified, `index.html.bak` backup was created, and prompt returned to `web-editor> `.
 
 ---
 
-### Step 4: Rejection of Unsupported Request (No Clarification)
+### Step 4: Safe Recovery with Undo (`:undo`)
 
-**Input Prompt:**
+**Input:**
 ```text
-web-editor> Add an onclick listener to the CTA link
+web-editor> :undo index.html
 ```
 
 **Expected Output:**
 ```text
-Unsupported request: JavaScript changes are unsupported.
-Summary: JavaScript changes are unsupported.
-No source files were changed.
+Undo completed: Restored index.html from index.html.bak
+File: index.html
+New backup: index.html.bak
+
+Reverse Diff:
+--- a/index.html
++++ b/index.html
+@@ -12,1 +12,1 @@
+-  <h1>Weft Studio Platform</h1>
++  <h1>Weft Studio</h1>
+
+web-editor> 
 ```
 
-**Supervisor Note**: Unsupported requests (JavaScript, broad redesigns, multi-file edits) are rejected directly and never become clarification flows.
+**Supervisor Note**: The previous `index.html` source was restored, a reverse diff was rendered, and the pre-undo source was safely preserved in the backup rotation.
 
 ---
 
-## 4. Post-Demo Workspace Restoration
+## 3. Post-Demo Workspace Restoration
 
 ```bash
 # Clean created backups and reset workspace
@@ -149,13 +150,11 @@ git checkout src/web/workspace/
 
 ---
 
-## 5. Final Project Acceptance Checklist
+## 4. Final Project Acceptance Checklist
 
-- [x] **Clarification State**: Process-local `ClarificationManager` handles pending clarifications with bounded attempts.
-- [x] **No Writes During Ambiguity**: Source files, backups, and memory remain unchanged until target is resolved.
-- [x] **Fresh Reread & Rerun**: Option selection triggers fresh source reread and reruns locator/editor pipeline.
-- [x] **Gemini Review Timing**: Read-only Gemini review runs ONLY after a unique target is located and candidate patch formulated.
-- [x] **Single File Writer**: Python patcher remains the sole file writer and backup creator.
-- [x] **Boundary Preservation**: JavaScript, broad redesigns, multi-file requests remain `unsupported`.
-- [x] **Test Coverage**: 100% mocked unit and integration tests (26 Phase 9 tests, 151 total repository tests).
+- [x] **Deterministic Syntax Validation**: `html5lib` and `tinycss2` validate complete resulting HTML/CSS files before backup or write.
+- [x] **Patch Preview Mode**: `PATCH_MODE=preview` holds pending preview transactions without touching disk until `:apply`.
+- [x] **Safe Undo**: `:undo` restores allowlisted files from rotating backups using atomic replacement and reverse diffs.
+- [x] **Colon Commands**: `:status`, `:preview`, `:apply`, `:cancel`, `:undo` operate cleanly.
+- [x] **100% Test Coverage**: All 180+ unit and integration tests pass deterministically.
 - [x] **Documentation**: Complete `README.md` and supervisor `DEMO.md`.
