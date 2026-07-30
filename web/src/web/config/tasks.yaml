@@ -39,7 +39,7 @@ locator_task:
     4. A previous target is not valid when the current source no longer
        contains a corresponding unique fragment.
 
-    Classification rules:
+    Classification & Clarification rules:
 
     1. Return status "located" only when the instruction can be handled
        through one exact replacement in one configured file.
@@ -51,14 +51,17 @@ locator_task:
        - exact_source must be non-empty;
        - exact_source must occur exactly once in that file;
        - selector should identify the CSS selector when relevant;
-       - property should identify the CSS property when relevant.
+       - property should identify the CSS property when relevant;
+       - clarification must be null.
 
-    3. Return status "ambiguous" when:
-       - more than one target could satisfy the request;
-       - the target cannot be identified confidently;
-       - the required source occurs more than once;
-       - follow-up memory does not resolve a vague reference;
-       - a remembered target cannot be relocated uniquely.
+    3. Return status "ambiguous" when more than one target could satisfy the request.
+       - If 2 to 6 distinct candidate targets exist in the current source (e.g. multiple links, buttons, headings, or CSS declarations):
+         populate `clarification` with a `ClarificationRequest`:
+           - `question`: concise question e.g. "Which link should I change?"
+           - `options`: 2 to 6 ClarificationOption items with unique short IDs ("1", "2", ...), clear descriptive labels (e.g. "Brand link: Weft Studio"), and target/file/selector metadata.
+           - `message`: explanation of ambiguity.
+         Do NOT include exact code replacement strings (old_text/new_text) in clarification options.
+       - If the ambiguity is too broad or cannot be categorized into 2-6 specific options, set `clarification: null`.
 
     4. Return status "unsupported" when the request requires:
        - JavaScript changes;
@@ -68,6 +71,7 @@ locator_task:
        - computed-style, advanced cascade, or specificity analysis;
        - an unconfigured file;
        - functionality outside a small HTML or CSS source replacement.
+       For status "unsupported", clarification must be null. Do not offer clarification options for unsupported requests.
 
     5. Do not propose new source code. Locating and classifying are your
        only responsibilities.

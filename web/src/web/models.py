@@ -11,12 +11,86 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ClarificationOption(StrictModel):
+    """A structured candidate option for clarifying an ambiguous request."""
+
+    id: str
+    label: str
+    file: str | None = None
+    target: str | None = None
+    selector: str | None = None
+    property: str | None = None
+
+    @field_validator("id", "label")
+    @classmethod
+    def validate_non_empty(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("clarification option text must not be empty")
+        return normalized
+
+    @field_validator(
+        "file",
+        "target",
+        "selector",
+        "property",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_metadata(
+        cls,
+        value: object,
+    ) -> object:
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return value
+
+
+class ClarificationRequest(StrictModel):
+    """Structured question and option set for clarifying an ambiguous turn."""
+
+    question: str
+    options: tuple[ClarificationOption, ...]
+    message: str
+
+    @field_validator("question", "message")
+    @classmethod
+    def validate_non_empty(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("text must not be empty")
+        return normalized
+
+    @field_validator("options")
+    @classmethod
+    def validate_options(
+        cls,
+        values: tuple[ClarificationOption, ...],
+    ) -> tuple[ClarificationOption, ...]:
+        if len(values) < 2:
+            raise ValueError(
+                "clarification request must contain at least two options"
+            )
+        if len(values) > 6:
+            raise ValueError(
+                "clarification request must contain at most six options"
+            )
+
+        ids = [opt.id for opt in values]
+        if len(ids) != len(set(ids)):
+            raise ValueError("clarification option IDs must be unique")
+
+        return values
+
+
 class LocatorResult(StrictModel):
     """
-    Structured output produced by the future locator agent.
+    Structured output produced by the locator agent.
 
     A located result identifies one exact source fragment in one file.
     Ambiguous and unsupported results explain why editing cannot continue.
+    Ambiguous results may include structured clarification options.
     """
 
     status: Literal["located", "ambiguous", "unsupported"]
@@ -26,6 +100,7 @@ class LocatorResult(StrictModel):
     property: str | None = None
     exact_source: str | None = None
     message: str
+    clarification: ClarificationRequest | None = None
 
     @field_validator(
         "file",
@@ -61,7 +136,12 @@ class LocatorResult(StrictModel):
 
     @model_validator(mode="after")
     def validate_status_payload(self) -> LocatorResult:
-        """Require location data when the target was located."""
+        """Require location data when located; forbid clarification when not ambiguous."""
+
+        if self.status != "ambiguous" and self.clarification is not None:
+            raise ValueError(
+                "clarification request is only permitted when status is ambiguous"
+            )
 
         if self.status != "located":
             return self
@@ -88,7 +168,7 @@ class LocatorResult(StrictModel):
 
 class ProposedPatch(StrictModel):
     """
-    Structured output produced by the future editor agent.
+    Structured output produced by the editor agent.
 
     A ready patch contains one exact replacement in one configured file.
     Python will validate uniqueness and apply the replacement in Phase 3.

@@ -9,7 +9,7 @@ from web.crew import (
     WebEditingCrew,
     build_crew_inputs,
 )
-from web.models import LocatorResult, ProposedPatch
+from web.models import ClarificationRequest, LocatorResult, ProposedPatch
 from web.reliability import (
     CrewFailureDetails,
     CrewFailureKind,
@@ -77,6 +77,7 @@ class TurnResult:
         "applied",
         "ambiguous",
         "unsupported",
+        "needs_clarification",
     ]
 
     summary: str
@@ -84,6 +85,7 @@ class TurnResult:
     file: str | None = None
     backup_file: str | None = None
     diff: str | None = None
+    clarification_request: ClarificationRequest | None = None
 
 
 def execute_crew(
@@ -96,17 +98,13 @@ def execute_crew(
         definition = WebEditingCrew(settings)
         editing_crew = definition.crew()
 
-        return editing_crew.kickoff(
-            inputs=dict(inputs)
-        )
+        return editing_crew.kickoff(inputs=dict(inputs))
 
     except LLMConfigurationError:
         raise
 
     except Exception as exc:
-        raise CrewExecutionError(
-            classify_crew_exception(exc)
-        ) from exc
+        raise CrewExecutionError(classify_crew_exception(exc)) from exc
 
 
 def _extract_task_models(
@@ -120,13 +118,10 @@ def _extract_task_models(
         None,
     )
 
-    if (
-        not isinstance(task_outputs, Sequence)
-        or isinstance(task_outputs, (str, bytes))
+    if not isinstance(task_outputs, Sequence) or isinstance(
+        task_outputs, (str, bytes)
     ):
-        raise CrewOutputError(
-            "crew result did not contain task outputs"
-        )
+        raise CrewOutputError("crew result did not contain task outputs")
 
     if len(task_outputs) != 2:
         raise CrewOutputError(
@@ -148,17 +143,13 @@ def _extract_task_models(
         locator_output,
         LocatorResult,
     ):
-        raise CrewOutputError(
-            "locator task did not return LocatorResult"
-        )
+        raise CrewOutputError("locator task did not return LocatorResult")
 
     if not isinstance(
         editor_output,
         ProposedPatch,
     ):
-        raise CrewOutputError(
-            "editor task did not return ProposedPatch"
-        )
+        raise CrewOutputError("editor task did not return ProposedPatch")
 
     return locator_output, editor_output
 
@@ -189,10 +180,7 @@ def _validate_rejected_locator(
         locator.exact_source,
     )
 
-    if any(
-        value is not None
-        for value in location_values
-    ):
+    if any(value is not None for value in location_values):
         raise CrewOutputError(
             "rejected locator result must not contain source data"
         )
@@ -209,10 +197,7 @@ def _validate_rejected_patch(
         patch.new_text,
     )
 
-    if any(
-        value is not None
-        for value in replacement_values
-    ):
+    if any(value is not None for value in replacement_values):
         raise CrewOutputError(
             "rejected patch must not contain replacement data"
         )
@@ -230,37 +215,25 @@ def _validate_ready_patch_against_locator(
     """Ensure the editor faithfully follows the locator result."""
 
     if locator.file is None:
-        raise CrewOutputError(
-            "located result is missing its file"
-        )
+        raise CrewOutputError("located result is missing its file")
 
     if locator.exact_source is None:
-        raise CrewOutputError(
-            "located result is missing exact source"
-        )
+        raise CrewOutputError("located result is missing exact source")
 
     if patch.file != locator.file:
-        raise CrewOutputError(
-            "editor patch file does not match locator file"
-        )
+        raise CrewOutputError("editor patch file does not match locator file")
 
     if patch.old_text != locator.exact_source:
         raise CrewOutputError(
             "editor old_text does not match locator exact_source"
         )
 
-    if (
-        locator.selector is not None
-        and patch.selector != locator.selector
-    ):
+    if locator.selector is not None and patch.selector != locator.selector:
         raise CrewOutputError(
             "editor selector does not match locator selector"
         )
 
-    if (
-        locator.property is not None
-        and patch.property != locator.property
-    ):
+    if locator.property is not None and patch.property != locator.property:
         raise CrewOutputError(
             "editor property does not match locator property"
         )
@@ -275,9 +248,7 @@ def validate_crew_output(
     Raw-text parsing is deliberately not used as a fallback.
     """
 
-    locator, editor_patch = _extract_task_models(
-        crew_output
-    )
+    locator, editor_patch = _extract_task_models(crew_output)
 
     final_patch = getattr(
         crew_output,
@@ -289,17 +260,10 @@ def validate_crew_output(
         final_patch,
         ProposedPatch,
     ):
-        raise CrewOutputError(
-            "final crew result did not return ProposedPatch"
-        )
+        raise CrewOutputError("final crew result did not return ProposedPatch")
 
-    if (
-        final_patch.model_dump()
-        != editor_patch.model_dump()
-    ):
-        raise CrewOutputError(
-            "final result does not match editor task output"
-        )
+    if final_patch.model_dump() != editor_patch.model_dump():
+        raise CrewOutputError("final result does not match editor task output")
 
     _validate_status_relationship(
         locator,
@@ -336,9 +300,7 @@ def process_turn(
     inputs = build_crew_inputs(
         instruction=instruction,
         sources=sources,
-        session_memory=session_state.build_context(
-            instruction=instruction
-        ),
+        session_memory=session_state.build_context(instruction=instruction),
     )
 
     try:
@@ -354,13 +316,19 @@ def process_turn(
         raise
 
     except Exception as exc:
-        raise CrewExecutionError(
-            classify_crew_exception(exc)
-        ) from exc
+        raise CrewExecutionError(classify_crew_exception(exc)) from exc
 
-    _, patch = validate_crew_output(crew_output)
+    locator, patch = validate_crew_output(crew_output)
 
     if patch.status == "ambiguous":
+        if locator.clarification is not None:
+            return TurnResult(
+                status="needs_clarification",
+                summary=locator.message or "Clarification needed.",
+                message=locator.message,
+                clarification_request=locator.clarification,
+            )
+
         return TurnResult(
             status="ambiguous",
             summary=patch.summary,
@@ -375,14 +343,11 @@ def process_turn(
         )
 
     if patch.file is None:
-        raise CrewOutputError(
-            "ready patch file is missing"
-        )
+        raise CrewOutputError("ready patch file is missing")
 
     if patch.file not in sources:
         raise CrewOutputError(
-            "ready patch refers to a file absent "
-            "from the current source snapshot"
+            "ready patch refers to a file absent from the current source snapshot"
         )
 
     application = patch_applier(
