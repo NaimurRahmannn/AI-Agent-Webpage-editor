@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +53,12 @@ class Settings(BaseSettings):
     gemini_cli_max_output_chars: int = Field(
         default=20000, ge=100, le=500000
     )
+
+    # Phase 10: Preview mode and syntax validation configuration
+    patch_mode: Literal["automatic", "preview"] = "automatic"
+    syntax_validation_enabled: bool = True
+    html_validation_enabled: bool = True
+    css_validation_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_file=REPOSITORY_ROOT / ".env",
@@ -120,6 +127,16 @@ class Settings(BaseSettings):
         if not stripped:
             raise ValueError("gemini_cli_model must not be empty")
         return stripped
+
+    @field_validator("patch_mode", mode="before")
+    @classmethod
+    def validate_patch_mode(cls, value: object) -> str:
+        """Validate patch mode setting."""
+        if isinstance(value, str):
+            norm = value.strip().lower()
+            if norm in {"automatic", "preview"}:
+                return norm
+        raise ValueError("PATCH_MODE must be either 'automatic' or 'preview'")
 
     @model_validator(mode="after")
     def validate_gemini_config(self) -> Settings:
