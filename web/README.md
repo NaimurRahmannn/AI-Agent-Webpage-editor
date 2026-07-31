@@ -41,6 +41,22 @@ Unlike unconstrained code-generation assistants, this project operates under str
 
 ---
 
+## Screenshots
+
+### Natural-language CSS edit
+
+The agent receives a conversational instruction, locates the relevant CSS rule, applies the change, creates a backup, and prints a unified diff.
+
+![Natural-language CSS edit applied by the agent](docs/screenshots/natural-language-edit.png)
+
+### Safe undo
+
+The `:undo` command restores the previous file version from backup and displays the reverse diff without requiring another LLM call.
+
+![Safe undo restoring the previous CSS state](docs/screenshots/safe-undo.png)
+
+---
+
 ## Scope & Exclusions
 
 ### In-Scope Capabilities
@@ -283,7 +299,7 @@ Using `uv` (recommended):
 
 ```bash
 # Sync dependencies automatically
-uv sync
+uv sync --extra dev
 ```
 
 Using standard `pip`:
@@ -299,7 +315,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 # Install package in editable mode
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ---
@@ -315,7 +331,7 @@ GROQ_MODEL=groq/llama-3.3-70b-versatile
 
 # Workspace Configuration
 PROJECT_ROOT=src/web/workspace
-ALLOWED_FILES=index.html,style.css
+ALLOWED_FILES=["index.html","style.css"]
 BACKUP_LIMIT=3
 SESSION_HISTORY_LIMIT=5
 
