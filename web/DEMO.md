@@ -1,6 +1,6 @@
-# Supervisor Demonstration Script (DEMO.md) — Phase 10
+# Demonstration Script (DEMO.md)
 
-This document provides a supervisor-ready, step-by-step demonstration walkthrough for the **CrewAI Conversational HTML/CSS Editing Agent with Patch Preview, Deterministic Syntax Validation, and Safe Undo**.
+This document provides a step-by-step demonstration walkthrough for the **CrewAI Conversational HTML/CSS Editing Agent with Patch Preview, Deterministic Syntax Validation, and Safe Undo**.
 
 ---
 
@@ -82,7 +82,7 @@ Type ':apply' to apply this patch, or ':cancel' to discard it.
 preview> 
 ```
 
-**Supervisor Note**: Observe that prompt changed to `preview> `, the diff is displayed, syntax was validated, but no source file or `.bak` backup file was written yet.
+**Note**: Observe that prompt changed to `preview> `, the diff is displayed, syntax was validated, but no source file or `.bak` backup file was written yet.
 
 ---
 
@@ -109,7 +109,7 @@ Diff:
 web-editor> 
 ```
 
-**Supervisor Note**: File `index.html` has now been modified, `index.html.bak` backup was created, and prompt returned to `web-editor> `.
+**Note**: File `index.html` has now been modified, `index.html.bak` backup was created, and prompt returned to `web-editor> `.
 
 ---
 
@@ -136,7 +136,7 @@ Reverse Diff:
 web-editor> 
 ```
 
-**Supervisor Note**: The previous `index.html` source was restored, a reverse diff was rendered, and the pre-undo source was safely preserved in the backup rotation.
+**Note**: The previous `index.html` source was restored, a reverse diff was rendered, and the pre-undo source was safely preserved in the backup rotation.
 
 ---
 
@@ -150,11 +150,11 @@ git checkout src/web/workspace/
 
 ---
 
-## 4. Final Project Acceptance Checklist
+## 4. Final Project checklist
 
 - [x] **Deterministic Syntax Validation**: `html5lib` and `tinycss2` validate complete resulting HTML/CSS files before backup or write.
 - [x] **Patch Preview Mode**: `PATCH_MODE=preview` holds pending preview transactions without touching disk until `:apply`.
 - [x] **Safe Undo**: `:undo` restores allowlisted files from rotating backups using atomic replacement and reverse diffs.
 - [x] **Colon Commands**: `:status`, `:preview`, `:apply`, `:cancel`, `:undo` operate cleanly.
 - [x] **100% Test Coverage**: All 180+ unit and integration tests pass deterministically.
-- [x] **Documentation**: Complete `README.md` and supervisor `DEMO.md`.
+- [x] **Documentation**: Complete `README.md` and `DEMO.md`.
