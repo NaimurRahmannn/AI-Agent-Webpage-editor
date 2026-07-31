@@ -179,7 +179,7 @@ class WebEditingCrew:
             tools=[],
             allow_delegation=False,
             verbose=False,
-            max_iter=3,
+            max_iter=1,
         )
 
     @agent
@@ -198,7 +198,7 @@ class WebEditingCrew:
             tools=tools,
             allow_delegation=False,
             verbose=False,
-            max_iter=3,
+            max_iter=1,
         )
 
     @task
