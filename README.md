@@ -47,7 +47,7 @@ Create `.env` inside the `web` directory:
 GROQ_API_KEY=gsk_your_groq_api_key
 GROQ_MODEL=groq/llama-3.3-70b-versatile
 PROJECT_ROOT=src/web/workspace
-ALLOWED_FILES=index.html,style.css
+ALLOWED_FILES=["index.html","style.css"]
 PATCH_MODE=automatic
 SYNTAX_VALIDATION_ENABLED=true
 ```
