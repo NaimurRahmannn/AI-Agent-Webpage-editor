@@ -179,3 +179,5 @@ def test_undo_restores_previous_file_version(
 
     # Original content restored
     assert "Weft Studio Web Editor" in (phase10_workspace.project_root / "index.html").read_text(encoding="utf-8")
+    assert session.successful_turn_count == 0
+    assert session.last_target is None

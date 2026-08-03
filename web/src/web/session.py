@@ -487,6 +487,7 @@ def handle_colon_command(
 
         try:
             undo_res = perform_undo(settings, target_file)
+            session_state.record_undo(undo_res.file)
             print()
             print(f"Undo completed: {undo_res.summary}")
             print(f"File: {undo_res.file}")

@@ -63,7 +63,7 @@ The `:undo` command restores the previous file version from backup and displays 
 - **Allowed Source Files**: Localized HTML (`.html`) and CSS (`.css`) files configured in `ALLOWED_FILES` within `PROJECT_ROOT` (default: `index.html`, `style.css`).
 - **Targeted Modifications**: Text content updates, HTML element structure modifications, inline styles, CSS selectors, rule blocks, colors, layout rules, and typography.
 - **Disambiguation**: Interactive clarification prompt when an edit request applies to multiple candidate elements or selectors.
-- **Safety Controls**: Pre-write verbatim substring matching, syntax validation, diff previews, rotating backups, and atomic undo operations.
+- **Safety Controls**: Pre-write unique substring matching with newline normalization, syntax validation, diff previews, rotating backups, and atomic undo operations.
 
 ### Explicit Exclusions
 - **Unallowed File Types**: JavaScript files (`.js`), backend logic (`.py`, `.php`), database schemas, shell scripts, or arbitrary executable creation.
@@ -126,7 +126,7 @@ flowchart TD
 4. **Clarification Manager (`web.clarification`)**: Manages active clarification state when Locator reports ambiguous targets.
 5. **Patch Preview State (`web.preview`)**: Retains pending patch diffs and summaries when running under `PATCH_MODE=preview`.
 6. **Syntax Validator (`web.tools.syntax_validator`)**: Parses updated HTML (`html5lib`) and CSS (`tinycss2`) in memory before filesystem writes.
-7. **Patcher Tool (`web.tools.patcher`)**: Verifies verbatim matches, manages backup rotation (`.bak`), and atomically replaces target files.
+7. **Patcher Tool (`web.tools.patcher`)**: Verifies unique newline-normalized matches, preserves the source file's newline style, manages backup rotation (`.bak`), and atomically replaces target files.
 8. **Undo Engine (`web.tools.undo`)**: Restores previous source snapshots deterministically and outputs reverse diffs.
 
 ---
@@ -252,7 +252,7 @@ web/
 │       └── workspace/         # Target HTML/CSS project files
 │           ├── index.html     # Default allowlisted HTML file
 │           └── style.css      # Default allowlisted CSS file
-└── tests/                     # Test suite (180+ unit & integration tests)
+└── tests/                     # Test suite (223 unit & integration tests)
     ├── test_clarification.py
     ├── test_clarification_integration.py
     ├── test_crew.py
@@ -369,7 +369,7 @@ The interactive REPL supports special colon commands executed locally without in
 ## Safety Guarantees
 
 1. **Strict File Allowlist**: Operations are restricted exclusively to files listed in `ALLOWED_FILES` inside `PROJECT_ROOT`. Directory traversal (`..`) or arbitrary path execution is rejected at startup.
-2. **Verbatim Match Enforcement**: Edits only succeed if `old_text` exists verbatim in the current target source. If source modified out-of-band, the turn fails safely.
+2. **Unique Match Enforcement**: Edits only succeed if `old_text` matches exactly once in the current target source after normalizing LF, CRLF, and CR line endings. Replacement text adopts the source file's local newline style; other source drift fails safely.
 3. **Syntax Validation Before Backup/Write**: HTML (`html5lib`) and CSS (`tinycss2`) must parse cleanly *in memory* before backup creation or atomic file writing occurs.
 4. **Atomic Write Engine**: File updates are staged to a temporary file (`.tmp`) and atomically replaced to prevent file corruption.
 5. **Sanitized Subprocess Isolation**: The Gemini CLI reviewer executes in an isolated environment with sensitive credentials removed, reading payload data exclusively from stdin.
@@ -379,7 +379,7 @@ The interactive REPL supports special colon commands executed locally without in
 
 ## Testing
 
-The project includes an extensive test suite with over 180 unit and integration tests (100% mocked LLM calls for deterministic execution).
+The project includes 223 unit and integration tests. External LLM calls are mocked for deterministic execution.
 
 Run the complete test suite:
 

@@ -268,6 +268,46 @@ class SessionState:
             property=turn.property,
         )
 
+    def record_undo(
+        self,
+        file: str,
+    ) -> bool:
+        """
+        Drop the most recent successful-turn memory for an undone file.
+
+        Undo restores source from backups, so the reverted turn must no
+        longer guide follow-up instructions. Earlier turns remain useful
+        because a one-step undo returns the file to that prior state.
+        """
+
+        normalized_file = _compact_text(
+            file,
+            MAX_FILE_CHARS,
+        )
+
+        retained = list(self._successful_turns)
+
+        for index in range(len(retained) - 1, -1, -1):
+            if retained[index].file == normalized_file:
+                del retained[index]
+                self._successful_turns = deque(
+                    retained,
+                    maxlen=self.history_limit,
+                )
+                self._last_target = (
+                    LastTarget(
+                        file=self._successful_turns[-1].file,
+                        target=self._successful_turns[-1].target,
+                        selector=self._successful_turns[-1].selector,
+                        property=self._successful_turns[-1].property,
+                    )
+                    if self._successful_turns
+                    else None
+                )
+                return True
+
+        return False
+
     def build_context(
         self,
         instruction: str | None = None,

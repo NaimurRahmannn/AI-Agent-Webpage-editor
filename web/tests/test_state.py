@@ -102,6 +102,84 @@ def test_history_discards_oldest_turn_at_limit() -> None:
     assert state.last_target.target == "third target"
 
 
+def test_record_undo_removes_only_latest_turn_for_file() -> None:
+    state = SessionState(history_limit=5)
+
+    state.record_success(
+        "Change heading",
+        make_ready_patch(
+            file="index.html",
+            target="heading",
+            selector="h1",
+            property_name=None,
+            summary="Update heading.",
+        ),
+    )
+    state.record_success(
+        "Change button",
+        make_ready_patch(
+            file="style.css",
+            target="button",
+            summary="Update button.",
+        ),
+    )
+    state.record_success(
+        "Change heading again",
+        make_ready_patch(
+            file="index.html",
+            target="heading second pass",
+            selector="h1",
+            property_name=None,
+            summary="Update heading again.",
+        ),
+    )
+
+    removed = state.record_undo("index.html")
+
+    assert removed is True
+    assert [
+        turn.target
+        for turn in state.successful_turns
+    ] == [
+        "heading",
+        "button",
+    ]
+    assert state.last_target is not None
+    assert state.last_target.file == "style.css"
+    assert state.last_target.target == "button"
+
+
+def test_record_undo_clears_last_target_for_only_turn() -> None:
+    state = SessionState(history_limit=3)
+
+    state.record_success(
+        "Change button",
+        make_ready_patch(),
+    )
+
+    removed = state.record_undo("style.css")
+
+    assert removed is True
+    assert state.successful_turns == ()
+    assert state.last_target is None
+
+
+def test_record_undo_unknown_file_leaves_memory_unchanged() -> None:
+    state = SessionState(history_limit=3)
+
+    state.record_success(
+        "Change button",
+        make_ready_patch(),
+    )
+
+    removed = state.record_undo("index.html")
+
+    assert removed is False
+    assert state.successful_turn_count == 1
+    assert state.last_target is not None
+    assert state.last_target.file == "style.css"
+
+
 def test_non_ready_patch_cannot_be_recorded() -> None:
     state = SessionState(history_limit=3)
 
