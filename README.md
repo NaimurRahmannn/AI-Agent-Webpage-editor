@@ -44,12 +44,28 @@ pip install -e .
 Create `.env` inside the `web` directory:
 
 ```env
-GROQ_API_KEY=gsk_your_groq_api_key
+# Groq API configuration (Required)
+GROQ_API_KEY=gsk_replace_with_your_actual_groq_api_key
 GROQ_MODEL=groq/llama-3.3-70b-versatile
+
+# Workspace & session settings
 PROJECT_ROOT=src/web/workspace
 ALLOWED_FILES=["index.html","style.css"]
+BACKUP_LIMIT=3
+SESSION_HISTORY_LIMIT=5
+
+# Gemini CLI read-only patch reviewer settings (Phase 8)
+GEMINI_API_KEY=
+GEMINI_CLI_ENABLED=false
+GEMINI_CLI_MODEL=flash
+GEMINI_CLI_TIMEOUT_SECONDS=60
+GEMINI_CLI_MAX_OUTPUT_CHARS=20000
+
+# Preview mode and syntax validation settings
 PATCH_MODE=automatic
 SYNTAX_VALIDATION_ENABLED=true
+HTML_VALIDATION_ENABLED=true
+CSS_VALIDATION_ENABLED=true
 ```
 
 ### 4. Run the Agent REPL
