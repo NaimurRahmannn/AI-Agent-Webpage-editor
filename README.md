@@ -61,7 +61,7 @@ python -m web.main
 ### 5. Run Test Suite
 
 ```bash
-python -m pytest tests/ -v
+./scripts/test.sh -v
 ```
 
 For full architecture details, per-turn execution flows, safety guarantees, and configuration guides, please refer to [web/README.md](web/README.md).
