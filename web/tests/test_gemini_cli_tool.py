@@ -37,8 +37,14 @@ def valid_settings(tmp_path: Path) -> Settings:
     )
 
 
-def test_settings_gemini_disabled_default(tmp_path: Path) -> None:
+def test_settings_gemini_disabled_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Gemini CLI is disabled by default and does not require gemini_api_key."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("gemini_api_key", raising=False)
+
     settings = Settings(
         _env_file=None,
         project_root=tmp_path,
