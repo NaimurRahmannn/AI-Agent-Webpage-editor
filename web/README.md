@@ -8,6 +8,7 @@ A specialized, local-first conversational CLI editing agent built with Python, C
 
 - [Overview](#overview)
 - [Scope & Exclusions](#scope--exclusions)
+- [Known Limitations](#known-limitations)
 - [Architecture](#architecture)
 - [Preview, Validation & Recovery](#preview-validation--recovery)
 - [Conversational Clarification Workflow](#conversational-clarification-workflow)
@@ -70,6 +71,19 @@ The `:undo` command restores the previous file version from backup and displays 
 - **Out-of-Boundary Access**: Any attempts to read, edit, or create files outside the explicit `ALLOWED_FILES` list in `PROJECT_ROOT`.
 - **Broad Redesigns**: Automated structural redesigns across unmanaged files or complex framework code generation.
 - **Unverified Writes**: No file modification occurs without passing strict substring verification and syntax parsing.
+
+---
+
+## Known Limitations
+
+- **Single Target per Turn**: The structured patch format supports one targeted replacement in one allowlisted file. Multi-file work and large redesigns must be divided into smaller requests.
+- **Exact-Match Dependence**: Locator and Editor metadata must agree with each other and match one unique source substring. The system safely rejects inconsistent, ambiguous, duplicated, or stale output, but this can require the user to provide a more precise instruction and retry.
+- **Model Variability**: Groq-hosted model responses are probabilistic. Strict validation prevents invalid output from being written, but it cannot guarantee that every valid natural-language request produces a patch on the first attempt.
+- **Free-Tier Groq Quota**: The current project setup uses a free-tier Groq API key. Free-tier request and token limits can be exhausted, producing rate-limit or quota errors. LLM-powered edits cannot continue until the quota resets or a Groq key with additional capacity is configured. Local commands such as `:status`, `:undo`, `:apply`, and `:cancel` do not require a Groq call.
+- **Network Dependency**: Locator and Editor execution requires internet access and Groq service availability. The optional Gemini review additionally depends on its CLI, credentials, network availability, and provider quota.
+- **Text-Only Preview**: Preview mode renders a unified source diff, not a live browser rendering, screenshot comparison, accessibility audit, or visual regression test.
+- **Limited Recovery History**: Rotating `.bak` files and in-memory session context are local and bounded by `BACKUP_LIMIT` and `SESSION_HISTORY_LIMIT`. They are not durable version control and do not replace Git commits.
+- **Validation Scope**: Parsing catches malformed HTML and CSS, but it does not prove visual correctness, responsive behavior, browser compatibility, semantic quality, or accessibility.
 
 ---
 
@@ -446,14 +460,19 @@ git checkout src/web/workspace/
 ### 1. `GROQ_API_KEY is missing or invalid`
 - Ensure `.env` exists in the `web/` directory and `GROQ_API_KEY` contains a valid Groq API key starting with `gsk_`.
 
-### 2. `Syntax validation failed`
+### 2. Groq rate-limit or quota error
+- The configured free-tier key may have reached its request or token allowance.
+- Wait for the provider quota window to reset, or configure a Groq key or plan with additional capacity.
+- Retry the request after capacity is available. The application cannot bypass provider-side quota limits.
+
+### 3. `Syntax validation failed`
 - The generated patch resulted in malformed HTML or invalid CSS.
 - Check syntax validation rules in `.env` (`HTML_VALIDATION_ENABLED=true`, `CSS_VALIDATION_ENABLED=true`).
 - Inspect error details printed in console to see exact line/token syntax issue.
 
-### 3. `Gemini CLI reviewer unavailable`
+### 4. `Gemini CLI reviewer unavailable`
 - Ensure `gemini` is installed and accessible in system `PATH`.
 - Verify `GEMINI_API_KEY` is configured if `GEMINI_CLI_ENABLED=true`.
 
-### 4. `Configured source file escapes project root`
+### 5. `Configured source file escapes project root`
 - Verify `PROJECT_ROOT` and `ALLOWED_FILES` in `.env`. Ensure filenames do not use relative `..` parent references.

@@ -97,4 +97,14 @@ docker build --target test -t ai-agent-web-editor-test ./web
 docker run --rm ai-agent-web-editor-test
 ```
 
+## Known Limitations
+
+- The editor only modifies allowlisted local HTML and CSS files; JavaScript, backend code, databases, and framework-wide changes are outside its scope.
+- Each request produces one targeted replacement in one file. Large redesigns must be split into smaller instructions.
+- Successful edits depend on the Locator and Editor agents returning consistent, exact source metadata. Ambiguous or mismatched output is rejected safely, so a request may need to be reworded more precisely.
+- Preview mode displays a text diff; it does not provide a live rendered browser preview or visual regression testing.
+- Backups and session memory are local and limited by configuration. They are not a replacement for Git history.
+- LLM editing requires internet access and an available Groq API. This project currently uses a free-tier Groq API key, whose request or token quota can be exhausted. When Groq returns a rate-limit or quota error, new LLM-powered edits must wait for the quota to reset or use a key with additional capacity; local commands such as `:status`, `:undo`, and pending-preview controls remain available.
+- The optional Gemini reviewer also depends on a separately installed CLI, credentials, network availability, and its provider quota.
+
 For full architecture details, per-turn execution flows, safety guarantees, and configuration guides, please refer to [web/README.md](web/README.md).
