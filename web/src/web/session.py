@@ -581,6 +581,11 @@ def run_session(settings: Settings) -> None:
                 print()
                 continue
 
+            pending_rec = clarification_mgr.get_pending()
+            orig_inst = (
+                pending_rec.original_instruction if pending_rec else ""
+            )
+
             try:
                 selected_option, clarified_instruction = (
                     clarification_mgr.resolve_answer(user_input)
@@ -599,11 +604,6 @@ def run_session(settings: Settings) -> None:
                 print(f"Clarification error: {exc}")
                 print()
                 continue
-
-            pending_rec = clarification_mgr.get_pending()
-            orig_inst = (
-                pending_rec.original_instruction if pending_rec else ""
-            )
 
             print()
             print("Resolved clarification:")

@@ -5,6 +5,7 @@ from web.orchestration import (
     CrewExecutionError,
     TurnResult,
 )
+from web.models import ClarificationOption, ClarificationRequest
 from web.settings import Settings
 
 
@@ -151,6 +152,102 @@ def test_session_prints_successful_application(
     assert "Backup: style.css.bak" in captured.out
     assert "-color: red;" in captured.out
     assert "+color: blue;" in captured.out
+
+
+def test_session_preserves_original_instruction_after_clarification(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    settings = Settings(
+        project_root=tmp_path,
+        groq_api_key="test-key",
+        groq_model="groq/test-model",
+    )
+
+    instructions = iter(
+        [
+            "Change the link text",
+            "2",
+            "quit",
+        ]
+    )
+
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt: next(instructions),
+    )
+
+    monkeypatch.setattr(
+        session_module,
+        "read_current_sources",
+        lambda settings: {
+            "index.html": "<a>Brand</a><a>CTA</a>",
+            "style.css": "body {}",
+        },
+    )
+
+    clarification = ClarificationRequest(
+        question="Which link should I change?",
+        options=(
+            ClarificationOption(
+                id="1",
+                label="Brand link",
+                file="index.html",
+                target="Brand link",
+            ),
+            ClarificationOption(
+                id="2",
+                label="CTA link",
+                file="index.html",
+                target="CTA link",
+            ),
+        ),
+        message="Multiple links found.",
+    )
+
+    processed: list[str] = []
+
+    def fake_process_turn(
+        *,
+        settings,
+        session_state,
+        instruction,
+        sources,
+    ):
+        processed.append(instruction)
+
+        if len(processed) == 1:
+            return TurnResult(
+                status="needs_clarification",
+                summary="Multiple links found.",
+                message="Multiple links found.",
+                clarification_request=clarification,
+            )
+
+        return TurnResult(
+            status="applied",
+            summary="Changed CTA link text.",
+            file="index.html",
+            backup_file="index.html.bak",
+            diff="--- a/index.html\n+++ b/index.html",
+        )
+
+    monkeypatch.setattr(
+        session_module,
+        "process_turn",
+        fake_process_turn,
+    )
+
+    session_module.run_session(settings)
+
+    captured = capsys.readouterr()
+
+    assert "Original request: Change the link text" in captured.out
+    assert "Selected target: CTA link" in captured.out
+    assert len(processed) == 2
+    assert "ORIGINAL USER INSTRUCTION" in processed[1]
+    assert "Change the link text" in processed[1]
 
 
 def test_source_snapshot_match_detection(
