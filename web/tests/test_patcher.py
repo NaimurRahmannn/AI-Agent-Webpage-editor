@@ -255,7 +255,76 @@ def test_rejects_overlapping_matches(tmp_path) -> None:
         encoding="utf-8"
     ) == "aaa"
 
-    
+
+def test_applies_lf_multiline_patch_to_crlf_source(
+    tmp_path,
+) -> None:
+    target = tmp_path / "style.css"
+    original = (
+        b".hero {\r\n"
+        b"  color: red;\r\n"
+        b"  padding: 1rem;\r\n"
+        b"}\r\n"
+    )
+    target.write_bytes(original)
+
+    result = apply_patch(
+        make_settings(tmp_path),
+        ready_patch(
+            old_text=(
+                ".hero {\n"
+                "  color: red;\n"
+                "  padding: 1rem;\n"
+                "}"
+            ),
+            new_text=(
+                ".hero {\n"
+                "  color: blue;\n"
+                "  padding: 2rem;\n"
+                "}"
+            ),
+        ),
+        expected_source_text=original.decode("utf-8").replace(
+            "\r\n",
+            "\n",
+        ),
+    )
+
+    assert target.read_bytes() == (
+        b".hero {\r\n"
+        b"  color: blue;\r\n"
+        b"  padding: 2rem;\r\n"
+        b"}\r\n"
+    )
+    assert (tmp_path / result.backup_file).read_bytes() == original
+
+
+def test_newline_normalized_matches_must_still_be_unique(
+    tmp_path,
+) -> None:
+    target = tmp_path / "style.css"
+    original = (
+        b".first {\r\n  color: red;\r\n}\r\n"
+        b".first {\n  color: red;\n}\n"
+    )
+    target.write_bytes(original)
+
+    with pytest.raises(
+        PatchValidationError,
+        match="more than once",
+    ):
+        apply_patch(
+            make_settings(tmp_path),
+            ready_patch(
+                old_text=".first {\n  color: red;\n}",
+                new_text=".first {\n  color: blue;\n}",
+            ),
+        )
+
+    assert target.read_bytes() == original
+    assert not (tmp_path / "style.css.bak").exists()
+
+
 def test_expected_snapshot_mismatch_creates_no_backup(
     tmp_path,
 ) -> None:

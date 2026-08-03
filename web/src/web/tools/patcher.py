@@ -194,31 +194,115 @@ def text_matches_snapshot(
     )
 
 
+def _normalize_newlines_with_boundaries(
+    text: str,
+) -> tuple[str, list[int]]:
+    """Normalize line endings and map each boundary to the source text."""
+
+    normalized: list[str] = []
+    boundaries = [0]
+    index = 0
+
+    while index < len(text):
+        character = text[index]
+
+        if character == "\r":
+            if index + 1 < len(text) and text[index + 1] == "\n":
+                index += 2
+            else:
+                index += 1
+
+            normalized.append("\n")
+        else:
+            normalized.append(character)
+            index += 1
+
+        boundaries.append(index)
+
+    return "".join(normalized), boundaries
+
+
+def _find_unique_occurrence_span(
+    source: str,
+    old_text: str,
+) -> tuple[int, int]:
+    """Return the exact source span of one newline-normalized match."""
+
+    if old_text == "":
+        raise PatchValidationError("old_text must not be empty")
+
+    normalized_source, source_boundaries = (
+        _normalize_newlines_with_boundaries(source)
+    )
+    normalized_old_text, _ = _normalize_newlines_with_boundaries(old_text)
+    first_match = normalized_source.find(normalized_old_text)
+
+    if first_match < 0:
+        raise PatchValidationError("old_text matched zero times")
+
+    second_match = normalized_source.find(
+        normalized_old_text,
+        first_match + 1,
+    )
+
+    if second_match >= 0:
+        raise PatchValidationError("old_text matched more than once")
+
+    return (
+        source_boundaries[first_match],
+        source_boundaries[first_match + len(normalized_old_text)],
+    )
+
+
 def find_unique_occurrence(
     source: str,
     old_text: str,
 ) -> int:
     """
-    Return the position of the sole exact source match.
+    Return the position of the sole newline-normalized source match.
 
     The second search begins one character after the first match so that
     overlapping matches are also treated as ambiguous.
     """
 
-    if old_text == "":
-        raise PatchValidationError("old_text must not be empty")
+    match_start, _ = _find_unique_occurrence_span(source, old_text)
+    return match_start
 
-    first_match = source.find(old_text)
 
-    if first_match < 0:
-        raise PatchValidationError("old_text matched zero times")
+def _first_newline(text: str) -> str | None:
+    """Return the first newline sequence used by text."""
 
-    second_match = source.find(old_text, first_match + 1)
+    for index, character in enumerate(text):
+        if character == "\n":
+            return "\n"
 
-    if second_match >= 0:
-        raise PatchValidationError("old_text matched more than once")
+        if character == "\r":
+            if index + 1 < len(text) and text[index + 1] == "\n":
+                return "\r\n"
 
-    return first_match
+            return "\r"
+
+    return None
+
+
+def _adapt_replacement_newlines(
+    new_text: str,
+    source: str,
+    match_start: int,
+    match_end: int,
+) -> str:
+    """Use the target's local newline style in replacement text."""
+
+    newline = (
+        _first_newline(source[match_start:match_end])
+        or _first_newline(source)
+    )
+
+    if newline is None:
+        return new_text
+
+    normalized_new_text, _ = _normalize_newlines_with_boundaries(new_text)
+    return normalized_new_text.replace("\n", newline)
 
 
 def build_unified_diff(
@@ -434,13 +518,27 @@ def prepare_patch(
             "source changed after it was supplied to the crew; patch was not written"
         )
 
-    match_index = find_unique_occurrence(source_text, patch.old_text)
+    match_start, match_end = _find_unique_occurrence_span(
+        source_text,
+        patch.old_text,
+    )
+    replacement_text = _adapt_replacement_newlines(
+        patch.new_text,
+        source_text,
+        match_start,
+        match_end,
+    )
 
     updated_text = (
-        source_text[:match_index]
-        + patch.new_text
-        + source_text[match_index + len(patch.old_text) :]
+        source_text[:match_start]
+        + replacement_text
+        + source_text[match_end:]
     )
+
+    if updated_text == source_text:
+        raise PatchValidationError(
+            "patch makes no change after adapting line endings"
+        )
 
     syntax_res = validate_source_syntax(
         filename=relative_name,
