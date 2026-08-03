@@ -6,6 +6,7 @@ venv/
 env/
 *.pyc
 .pytest_cache/
+.uv-cache/
 .coverage
 htmlcov/
 *.log

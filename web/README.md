@@ -384,17 +384,17 @@ The project includes an extensive test suite with over 180 unit and integration 
 Run the complete test suite:
 
 ```bash
-python -m pytest tests/ -v
+./scripts/test.sh -v
 ```
 
 Run specific test modules:
 
 ```bash
 # Syntax Validation, Preview, and Undo tests
-python -m pytest tests/test_syntax_validator.py tests/test_preview.py tests/test_undo.py tests/test_phase10_integration.py -v
+./scripts/test.sh tests/test_syntax_validator.py tests/test_preview.py tests/test_undo.py tests/test_phase10_integration.py -v
 
 # Clarification & Gemini CLI tests
-python -m pytest tests/test_clarification.py tests/test_gemini_cli_tool.py -v
+./scripts/test.sh tests/test_clarification.py tests/test_gemini_cli_tool.py -v
 ```
 
 ---

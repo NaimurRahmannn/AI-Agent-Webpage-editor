@@ -14,7 +14,7 @@ cd web
 export PATCH_MODE=preview
 
 # Verify test suite passes
-python -m pytest tests/ -v
+./scripts/test.sh -v
 ```
 
 ---
