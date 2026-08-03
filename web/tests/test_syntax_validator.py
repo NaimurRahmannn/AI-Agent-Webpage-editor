@@ -114,6 +114,40 @@ def test_css_valid_media_query(val_settings: Settings) -> None:
     assert res.valid is True
 
 
+def test_css_ignores_delimiters_inside_strings_and_comments(val_settings: Settings) -> None:
+    css = """
+body::before {
+  content: "{ )";
+}
+
+/* Decorative literal: } ) */
+.card {
+  background-image: url("hero).png");
+}
+"""
+
+    res = validate_source_syntax(filename="style.css", content=css, settings=val_settings)
+    assert res.valid is True
+
+
+def test_css_valid_declaration_block_at_rules(val_settings: Settings) -> None:
+    css = """
+@font-face {
+  font-family: "Inter";
+  src: url("inter.woff2") format("woff2");
+}
+
+@property --brand-color {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #2d6a4f;
+}
+"""
+
+    res = validate_source_syntax(filename="style.css", content=css, settings=val_settings)
+    assert res.valid is True
+
+
 def test_css_invalid_inside_media_query(val_settings: Settings) -> None:
     bad_css = "@media (max-width: 600px) { .btn { font-size 12px; } }"
     res = validate_source_syntax(filename="style.css", content=bad_css, settings=val_settings)
