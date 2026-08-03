@@ -21,7 +21,11 @@ from web.preview import (
 )
 from web.settings import Settings
 from web.state import SessionState
-from web.tools.patcher import commit_prepared_patch, prepare_patch
+from web.tools.patcher import (
+    PatchSourceChangedError,
+    commit_prepared_patch,
+    prepare_patch,
+)
 
 
 @dataclass
@@ -186,3 +190,68 @@ def test_stale_preview_rejection(preview_settings: Settings) -> None:
 
     with pytest.raises(Exception, match="Source file changed"):
         commit_prepared_patch(preview_settings, res.prepared_patch)
+
+
+def test_preview_rejects_target_replaced_by_symlink(
+    preview_settings: Settings,
+) -> None:
+    target = preview_settings.project_root / "style.css"
+    non_allowlisted = preview_settings.project_root / "other.css"
+    original = target.read_text(encoding="utf-8")
+    non_allowlisted.write_text(original, encoding="utf-8")
+
+    patch = ProposedPatch(
+        status="ready",
+        file="style.css",
+        old_text="black",
+        new_text="blue",
+        target="body color",
+        summary="Change the body color.",
+    )
+    prepared = prepare_patch(
+        preview_settings,
+        patch,
+        expected_source_text=original,
+    )
+
+    target.unlink()
+    try:
+        target.symlink_to(non_allowlisted)
+    except OSError:
+        pytest.skip("symbolic links are unavailable in this test environment")
+
+    with pytest.raises(PatchSourceChangedError, match="symbolic link"):
+        commit_prepared_patch(preview_settings, prepared)
+
+    assert non_allowlisted.read_text(encoding="utf-8") == original
+    assert not (preview_settings.project_root / "other.css.bak").exists()
+
+
+def test_preview_rejects_replaced_file_with_identical_content(
+    preview_settings: Settings,
+) -> None:
+    target = preview_settings.project_root / "style.css"
+    original = target.read_text(encoding="utf-8")
+    patch = ProposedPatch(
+        status="ready",
+        file="style.css",
+        old_text="black",
+        new_text="blue",
+        target="body color",
+        summary="Change the body color.",
+    )
+    prepared = prepare_patch(
+        preview_settings,
+        patch,
+        expected_source_text=original,
+    )
+
+    replacement = preview_settings.project_root / "replacement.css"
+    replacement.write_text(original, encoding="utf-8")
+    replacement.replace(target)
+
+    with pytest.raises(PatchSourceChangedError, match="replaced"):
+        commit_prepared_patch(preview_settings, prepared)
+
+    assert target.read_text(encoding="utf-8") == original
+    assert not (preview_settings.project_root / "style.css.bak").exists()

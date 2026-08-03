@@ -58,6 +58,8 @@ class PreparedPatch:
     file: str
     summary: str
     target_path: Path
+    target_device: int
+    target_inode: int
     original_text: str
     updated_text: str
     original_sha256: str
@@ -157,6 +159,27 @@ def read_utf8_source(
         ) from exc
 
     return source_bytes, source_text
+
+
+def regular_file_identity(
+    target: Path,
+    relative_name: str,
+) -> tuple[int, int]:
+    """Return a stable identity for one non-symlink regular file."""
+
+    try:
+        file_stat = target.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise PatchValidationError(
+            f"could not inspect target file {relative_name}: {exc}"
+        ) from exc
+
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise PatchValidationError(
+            f"target path is not a regular file: {relative_name}"
+        )
+
+    return file_stat.st_dev, file_stat.st_ino
 
 
 def text_matches_snapshot(
@@ -382,7 +405,7 @@ def prepare_patch(
     5. Validates old_text occurs exactly once.
     6. Constructs updated_text in memory.
     7. Runs deterministic syntax validation on complete updated_text.
-    8. Builds unified diff and computes SHA-256 hashes.
+    8. Builds unified diff and records content and file identity.
     """
 
     relative_name, target = resolve_patch_target(settings, patch)
@@ -396,7 +419,13 @@ def prepare_patch(
     if patch.old_text == patch.new_text:
         raise PatchValidationError("old_text and new_text must be different")
 
+    target_identity = regular_file_identity(target, relative_name)
     source_bytes, source_text = read_utf8_source(target, relative_name)
+
+    if regular_file_identity(target, relative_name) != target_identity:
+        raise PatchSourceChangedError(
+            "source target changed while the patch was being prepared"
+        )
 
     if expected_source_text is not None and not text_matches_snapshot(
         source_text, expected_source_text
@@ -438,6 +467,8 @@ def prepare_patch(
         file=relative_name,
         summary=patch.summary,
         target_path=target,
+        target_device=target_identity[0],
+        target_inode=target_identity[1],
         original_text=source_text,
         updated_text=updated_text,
         original_sha256=orig_hash,
@@ -454,11 +485,18 @@ def commit_prepared_patch(
     """
     Commit a previously prepared patch to disk safely.
 
-    1. Re-resolves target relative to allowlist and verifies no symlinks.
+    1. Re-resolves the target and verifies its path and file identity.
     2. Rereads target source and verifies original_sha256 hash matches.
     3. Creates rotating backup and verifies it.
     4. Performs atomic temporary write and replacement.
     """
+
+    raw_target = settings.project_root / prepared.file
+
+    if raw_target.is_symlink():
+        raise PatchSourceChangedError(
+            "Source target was replaced by a symbolic link before commit."
+        )
 
     allowed_paths = resolve_allowed_paths(settings)
     if prepared.file not in allowed_paths:
@@ -466,10 +504,28 @@ def commit_prepared_patch(
 
     target = allowed_paths[prepared.file]
 
-    if target.is_symlink():
-        raise PatchValidationError("symbolic-link target is not supported")
+    if target != prepared.target_path:
+        raise PatchSourceChangedError(
+            "Source target resolved to a different path before commit."
+        )
 
-    source_bytes, source_text = read_utf8_source(target, prepared.file)
+    prepared_identity = (
+        prepared.target_device,
+        prepared.target_inode,
+    )
+
+    if regular_file_identity(raw_target, prepared.file) != prepared_identity:
+        raise PatchSourceChangedError(
+            "Source target was replaced before commit."
+        )
+
+    source_bytes, _ = read_utf8_source(target, prepared.file)
+
+    if regular_file_identity(raw_target, prepared.file) != prepared_identity:
+        raise PatchSourceChangedError(
+            "Source target changed while commit validation was running."
+        )
+
     current_hash = hashlib.sha256(source_bytes).hexdigest()
 
     if current_hash != prepared.original_sha256:
