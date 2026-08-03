@@ -53,6 +53,7 @@ PROJECT_ROOT=src/web/workspace
 ALLOWED_FILES=["index.html","style.css"]
 BACKUP_LIMIT=3
 SESSION_HISTORY_LIMIT=5
+CREWAI_TRACING_ENABLED=false
 
 # Gemini CLI read-only patch reviewer settings (Phase 8)
 GEMINI_API_KEY=
