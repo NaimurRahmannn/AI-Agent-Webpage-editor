@@ -11,6 +11,10 @@ from pathlib import Path
 
 from web.settings import ALLOWED_SOURCE_SUFFIXES, Settings, resolve_allowed_paths
 from web.tools.patcher import (
+    PatchBackupError,
+    PatchSourceChangedError,
+    PatchValidationError,
+    PatchWriteError,
     _backup_path,
     atomic_replace_text,
     build_unified_diff,
@@ -31,6 +35,10 @@ class UndoTargetError(UndoError):
 
 class UndoBackupNotFoundError(UndoError):
     """Raised when no backup exists for the requested target file."""
+
+
+class UndoBackupError(UndoError):
+    """Raised when backup rotation or verification fails during undo."""
 
 
 class UndoValidationError(UndoError):
@@ -97,8 +105,11 @@ def perform_undo(
     if not newest_backup.exists() or not newest_backup.is_file():
         raise UndoBackupNotFoundError(f"no backup found for {relative_name} ({newest_backup.name})")
 
-    curr_bytes, curr_text = read_utf8_source(target, relative_name)
-    bak_bytes, bak_text = read_utf8_source(newest_backup, newest_backup.name)
+    try:
+        curr_bytes, curr_text = read_utf8_source(target, relative_name)
+        bak_bytes, bak_text = read_utf8_source(newest_backup, newest_backup.name)
+    except PatchValidationError as exc:
+        raise UndoValidationError(str(exc)) from exc
 
     syntax_res = validate_source_syntax(
         filename=relative_name,
@@ -118,15 +129,22 @@ def perform_undo(
         relative_name=relative_name,
     )
 
-    # Rotate backups: current target source becomes the new .bak
-    new_primary_backup = create_rotating_backup(target, settings.backup_limit)
-    verify_backup(new_primary_backup, curr_bytes)
+    try:
+        # Rotate backups: current target source becomes the new .bak
+        new_primary_backup = create_rotating_backup(target, settings.backup_limit)
+        verify_backup(new_primary_backup, curr_bytes)
 
-    atomic_replace_text(
-        target=target,
-        new_text=bak_text,
-        expected_source=curr_bytes,
-    )
+        atomic_replace_text(
+            target=target,
+            new_text=bak_text,
+            expected_source=curr_bytes,
+        )
+    except PatchSourceChangedError as exc:
+        raise UndoSourceChangedError(str(exc)) from exc
+    except PatchWriteError as exc:
+        raise UndoWriteError(str(exc)) from exc
+    except PatchBackupError as exc:
+        raise UndoBackupError(str(exc)) from exc
 
     summary = f"Restored {relative_name} from {newest_backup.name}"
 

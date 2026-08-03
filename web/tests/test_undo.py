@@ -9,10 +9,18 @@ from pathlib import Path
 import pytest
 
 from web.settings import Settings
+from web.tools.patcher import (
+    PatchBackupError,
+    PatchSourceChangedError,
+    PatchWriteError,
+)
 from web.tools.undo import (
+    UndoBackupError,
     UndoBackupNotFoundError,
+    UndoSourceChangedError,
     UndoTargetError,
     UndoValidationError,
+    UndoWriteError,
     perform_undo,
 )
 
@@ -79,3 +87,42 @@ def test_undo_invalid_syntax_backup_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(UndoValidationError, match="syntax validation failed"):
         perform_undo(settings, "index.html")
+
+
+def test_undo_translates_backup_failure(
+    undo_workspace: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_backup(*args, **kwargs):
+        raise PatchBackupError("could not rotate backup")
+
+    monkeypatch.setattr("web.tools.undo.create_rotating_backup", fail_backup)
+
+    with pytest.raises(UndoBackupError, match="could not rotate backup"):
+        perform_undo(undo_workspace, "index.html")
+
+
+def test_undo_translates_source_change_failure(
+    undo_workspace: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_verification(*args, **kwargs):
+        raise PatchSourceChangedError("source changed during undo")
+
+    monkeypatch.setattr("web.tools.undo.verify_backup", fail_verification)
+
+    with pytest.raises(UndoSourceChangedError, match="source changed during undo"):
+        perform_undo(undo_workspace, "index.html")
+
+
+def test_undo_translates_write_failure(
+    undo_workspace: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_write(*args, **kwargs):
+        raise PatchWriteError("could not replace file")
+
+    monkeypatch.setattr("web.tools.undo.atomic_replace_text", fail_write)
+
+    with pytest.raises(UndoWriteError, match="could not replace file"):
+        perform_undo(undo_workspace, "index.html")
