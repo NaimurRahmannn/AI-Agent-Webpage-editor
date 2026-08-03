@@ -80,4 +80,20 @@ python -m web.main
 ./scripts/test.sh -v
 ```
 
+### Optional: Run with Docker
+
+From the repository root:
+
+```bash
+docker build -t ai-agent-web-editor ./web
+docker run --rm -it --env-file web/.env -v "$PWD/web/src/web/workspace:/app/src/web/workspace" ai-agent-web-editor
+```
+
+Run the test suite in Docker:
+
+```bash
+docker build --target test -t ai-agent-web-editor-test ./web
+docker run --rm ai-agent-web-editor-test
+```
+
 For full architecture details, per-turn execution flows, safety guarantees, and configuration guides, please refer to [web/README.md](web/README.md).

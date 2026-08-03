@@ -23,7 +23,7 @@ body {
     "Segoe UI",
     sans-serif;
   color: var(--text);
-  background: var(--page-bg);
+  background: #ffffff;
 }
 
 a {

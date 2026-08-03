@@ -351,6 +351,33 @@ CSS_VALIDATION_ENABLED=true
 
 ---
 
+## Docker Usage
+
+Build the runtime image from the repository root:
+
+```bash
+docker build -t ai-agent-web-editor ./web
+```
+
+Run the interactive editor with your local `.env` file and mounted workspace:
+
+```bash
+docker run --rm -it --env-file web/.env -v "$PWD/web/src/web/workspace:/app/src/web/workspace" ai-agent-web-editor
+```
+
+The workspace mount keeps edits, backups, and undo state files on your host machine under `web/src/web/workspace`.
+
+Run the automated test suite inside Docker:
+
+```bash
+docker build --target test -t ai-agent-web-editor-test ./web
+docker run --rm ai-agent-web-editor-test
+```
+
+If you are already inside the `web/` directory, use `.` as the build context and `.env` / `src/web/workspace` for the paths.
+
+---
+
 ## REPL Colon Commands
 
 The interactive REPL supports special colon commands executed locally without invoking LLM calls:
