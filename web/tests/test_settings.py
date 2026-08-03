@@ -5,6 +5,19 @@ from web.settings import Settings
 from web.state import SessionState
 
 
+def test_settings_defaults_are_isolated_from_local_environment(
+    tmp_path,
+) -> None:
+    settings = Settings(project_root=tmp_path)
+
+    assert Settings.model_config["env_file"] is None
+    assert settings.groq_api_key is None
+    assert settings.groq_model is None
+    assert settings.gemini_api_key is None
+    assert settings.gemini_cli_enabled is False
+    assert settings.patch_mode == "automatic"
+
+
 def test_settings_history_limit_creates_session_state(
     tmp_path,
 ) -> None:
