@@ -154,7 +154,8 @@ def test_undo_restores_previous_file_version(
     sources = {"index.html": SAMPLE_HTML, "style.css": "body { margin: 0; }"}
     res = process_turn(settings=phase10_workspace, session_state=session, instruction="Change heading", sources=sources, crew_executor=lambda s, i: FakeCrewOutput(pydantic=pat, tasks_output=[FakeTaskOutput(loc), FakeTaskOutput(pat)]))
 
-    commit_prepared_patch(phase10_workspace, res.prepared_patch) # type: ignore
+    assert res.prepared_patch is not None
+    commit_prepared_patch(phase10_workspace, res.prepared_patch)
     session.record_success("Change heading", pat)
 
     assert "New Headline" in (phase10_workspace.project_root / "index.html").read_text(encoding="utf-8")
