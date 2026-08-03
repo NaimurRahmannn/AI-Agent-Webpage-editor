@@ -90,6 +90,7 @@ class TurnResult:
     backup_file: str | None = None
     diff: str | None = None
     clarification_request: ClarificationRequest | None = None
+    proposed_patch: ProposedPatch | None = None
     prepared_patch: PreparedPatch | None = None
 
 
@@ -384,6 +385,7 @@ def process_turn(
             summary=prepared.summary,
             file=prepared.file,
             diff=prepared.diff,
+            proposed_patch=patch,
             prepared_patch=prepared,
         )
 
@@ -400,5 +402,6 @@ def process_turn(
         file=application.file,
         backup_file=application.backup_file,
         diff=application.diff,
+        proposed_patch=patch,
         prepared_patch=prepared,
     )

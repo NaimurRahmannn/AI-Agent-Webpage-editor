@@ -623,11 +623,11 @@ def run_session(settings: Settings) -> None:
             if result.status == "applied":
                 print_application(result)
             elif result.status == "preview_ready":
-                if result.prepared_patch:
+                if result.prepared_patch and result.proposed_patch:
                     preview_state.set_pending(
                         PendingPreview(
                             instruction=clarified_instruction,
-                            patch=result.prepared_patch, # type: ignore
+                            patch=result.proposed_patch,
                             prepared_patch=result.prepared_patch,
                             created_for_file=result.file or "",
                         )
@@ -655,11 +655,11 @@ def run_session(settings: Settings) -> None:
             if result.status == "applied":
                 print_application(result)
             elif result.status == "preview_ready":
-                if result.prepared_patch:
+                if result.prepared_patch and result.proposed_patch:
                     preview_state.set_pending(
                         PendingPreview(
                             instruction=user_input,
-                            patch=result.prepared_patch, # type: ignore
+                            patch=result.proposed_patch,
                             prepared_patch=result.prepared_patch,
                             created_for_file=result.file or "",
                         )
