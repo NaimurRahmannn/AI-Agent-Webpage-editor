@@ -1,4 +1,4 @@
-"""Conversational clarification state management for Phase 9.
+"""Conversational clarification state management.
 
 Provides process-local, bounded state management for pending clarifications when
 a user instruction is ambiguous but has candidate options.

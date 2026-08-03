@@ -1,4 +1,4 @@
-"""Unit tests for Phase 9 clarification models and ClarificationManager.
+"""Unit tests for clarification models and ClarificationManager.
 
 All tests are deterministic and execute entirely in memory.
 """

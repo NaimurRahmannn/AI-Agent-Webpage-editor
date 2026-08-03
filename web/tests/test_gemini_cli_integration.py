@@ -1,4 +1,4 @@
-"""Integration tests for Phase 8 Gemini CLI read-only patch reviewer integration.
+"""Integration tests for Gemini CLI read-only patch reviewer integration.
 
 All tests mock LLM and subprocess execution. No network calls or live CLI
 invocations are performed.

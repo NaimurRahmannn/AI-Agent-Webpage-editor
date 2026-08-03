@@ -55,7 +55,7 @@ BACKUP_LIMIT=3
 SESSION_HISTORY_LIMIT=5
 CREWAI_TRACING_ENABLED=false
 
-# Gemini CLI read-only patch reviewer settings (Phase 8)
+# Gemini CLI read-only patch reviewer settings
 GEMINI_API_KEY=
 GEMINI_CLI_ENABLED=false
 GEMINI_CLI_MODEL=flash

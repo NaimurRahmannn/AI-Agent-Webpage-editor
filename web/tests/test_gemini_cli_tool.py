@@ -1,4 +1,4 @@
-"""Unit tests for the GeminiCliReviewTool and Settings configuration in Phase 8.
+"""Unit tests for the GeminiCliReviewTool and Settings configuration.
 
 All tests mock subprocess execution and filesystem utilities. No network,
 browser, npm, or live Gemini CLI calls are performed.

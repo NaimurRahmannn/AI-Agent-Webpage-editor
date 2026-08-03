@@ -1,4 +1,4 @@
-"""Process-local preview state manager for Phase 10.
+"""Process-local preview state manager.
 
 Manages pending preview state when PATCH_MODE=preview. Enforces one pending preview
 transaction at a time and provides resolution via :apply and :cancel.

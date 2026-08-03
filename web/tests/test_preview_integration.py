@@ -1,4 +1,4 @@
-"""End-to-end integration tests for Phase 10 preview, validation, and safe recovery.
+"""End-to-end integration tests for preview, validation, and safe recovery.
 
 All tests execute in memory using pytest temporary workspace directories and mocked LLM calls.
 """
@@ -44,7 +44,7 @@ SAMPLE_HTML = """\
 
 
 @pytest.fixture()
-def phase10_workspace(tmp_path: Path) -> Settings:
+def preview_workspace(tmp_path: Path) -> Settings:
     html_path = tmp_path / "index.html"
     css_path = tmp_path / "style.css"
     html_path.write_text(SAMPLE_HTML, encoding="utf-8")
@@ -61,7 +61,7 @@ def phase10_workspace(tmp_path: Path) -> Settings:
 
 
 def test_status_command_output(
-    phase10_workspace: Settings,
+    preview_workspace: Settings,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     session = SessionState(history_limit=5)
@@ -70,7 +70,7 @@ def test_status_command_output(
 
     handled = handle_colon_command(
         ":status",
-        phase10_workspace,
+        preview_workspace,
         session,
         clarification_mgr,
         preview_state,
@@ -84,7 +84,7 @@ def test_status_command_output(
     assert "SECRET" not in captured
 
 
-def test_preview_and_apply_flow(phase10_workspace: Settings) -> None:
+def test_preview_and_apply_flow(preview_workspace: Settings) -> None:
     loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Weft Studio Web Editor</h1>", target="h1", message="OK")
     pat = ProposedPatch(status="ready", file="index.html", old_text="<h1>Weft Studio Web Editor</h1>", new_text="<h1>New Headline</h1>", target="h1", summary="Update heading")
     out = FakeCrewOutput(pydantic=pat, tasks_output=[FakeTaskOutput(loc), FakeTaskOutput(pat)])
@@ -93,7 +93,7 @@ def test_preview_and_apply_flow(phase10_workspace: Settings) -> None:
     sources = {"index.html": SAMPLE_HTML, "style.css": "body { margin: 0; }"}
 
     res = process_turn(
-        settings=phase10_workspace,
+        settings=preview_workspace,
         session_state=session,
         instruction="Change heading",
         sources=sources,
@@ -105,20 +105,20 @@ def test_preview_and_apply_flow(phase10_workspace: Settings) -> None:
     assert "New Headline" in res.prepared_patch.diff
 
     # Disk remains unchanged before apply
-    assert "Weft Studio Web Editor" in (phase10_workspace.project_root / "index.html").read_text(encoding="utf-8")
-    assert not list(phase10_workspace.project_root.glob("*.bak*"))
+    assert "Weft Studio Web Editor" in (preview_workspace.project_root / "index.html").read_text(encoding="utf-8")
+    assert not list(preview_workspace.project_root.glob("*.bak*"))
 
     # Apply preview patch
-    commit_res = commit_prepared_patch(phase10_workspace, res.prepared_patch)
+    commit_res = commit_prepared_patch(preview_workspace, res.prepared_patch)
     session.record_success("Change heading", pat)
 
-    assert "New Headline" in (phase10_workspace.project_root / "index.html").read_text(encoding="utf-8")
-    assert (phase10_workspace.project_root / "index.html.bak").exists()
+    assert "New Headline" in (preview_workspace.project_root / "index.html").read_text(encoding="utf-8")
+    assert (preview_workspace.project_root / "index.html.bak").exists()
     assert session.successful_turn_count == 1
 
 
 def test_syntax_validation_prevents_malformed_patch_write(
-    phase10_workspace: Settings,
+    preview_workspace: Settings,
 ) -> None:
     loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Weft Studio Web Editor</h1>", target="h1", message="OK")
     # Malformed HTML replacement
@@ -130,20 +130,20 @@ def test_syntax_validation_prevents_malformed_patch_write(
 
     with pytest.raises(Exception, match="Syntax validation failed"):
         process_turn(
-            settings=phase10_workspace,
+            settings=preview_workspace,
             session_state=session,
             instruction="Bad HTML edit",
             sources=sources,
             crew_executor=lambda s, i: out,
         )
 
-    assert "Weft Studio Web Editor" in (phase10_workspace.project_root / "index.html").read_text(encoding="utf-8")
-    assert not list(phase10_workspace.project_root.glob("*.bak*"))
+    assert "Weft Studio Web Editor" in (preview_workspace.project_root / "index.html").read_text(encoding="utf-8")
+    assert not list(preview_workspace.project_root.glob("*.bak*"))
     assert session.successful_turn_count == 0
 
 
 def test_undo_restores_previous_file_version(
-    phase10_workspace: Settings,
+    preview_workspace: Settings,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     loc = LocatorResult(status="located", file="index.html", exact_source="<h1>Weft Studio Web Editor</h1>", target="h1", message="OK")
@@ -152,14 +152,14 @@ def test_undo_restores_previous_file_version(
     # Manually execute edit and commit to simulate turn 1
     session = SessionState(history_limit=5)
     sources = {"index.html": SAMPLE_HTML, "style.css": "body { margin: 0; }"}
-    res = process_turn(settings=phase10_workspace, session_state=session, instruction="Change heading", sources=sources, crew_executor=lambda s, i: FakeCrewOutput(pydantic=pat, tasks_output=[FakeTaskOutput(loc), FakeTaskOutput(pat)]))
+    res = process_turn(settings=preview_workspace, session_state=session, instruction="Change heading", sources=sources, crew_executor=lambda s, i: FakeCrewOutput(pydantic=pat, tasks_output=[FakeTaskOutput(loc), FakeTaskOutput(pat)]))
 
     assert res.prepared_patch is not None
-    commit_prepared_patch(phase10_workspace, res.prepared_patch)
+    commit_prepared_patch(preview_workspace, res.prepared_patch)
     session.record_success("Change heading", pat)
 
-    assert "New Headline" in (phase10_workspace.project_root / "index.html").read_text(encoding="utf-8")
-    assert (phase10_workspace.project_root / "index.html.bak").exists()
+    assert "New Headline" in (preview_workspace.project_root / "index.html").read_text(encoding="utf-8")
+    assert (preview_workspace.project_root / "index.html.bak").exists()
 
     # Perform undo via colon command
     clarification_mgr = ClarificationManager()
@@ -167,7 +167,7 @@ def test_undo_restores_previous_file_version(
 
     handled = handle_colon_command(
         ":undo index.html",
-        phase10_workspace,
+        preview_workspace,
         session,
         clarification_mgr,
         preview_state,
@@ -178,6 +178,6 @@ def test_undo_restores_previous_file_version(
     assert "Undo completed" in captured
 
     # Original content restored
-    assert "Weft Studio Web Editor" in (phase10_workspace.project_root / "index.html").read_text(encoding="utf-8")
+    assert "Weft Studio Web Editor" in (preview_workspace.project_root / "index.html").read_text(encoding="utf-8")
     assert session.successful_turn_count == 0
     assert session.last_target is None

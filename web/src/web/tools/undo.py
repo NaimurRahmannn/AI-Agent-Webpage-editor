@@ -1,4 +1,4 @@
-"""Deterministic, safe undo capability for Phase 10.
+"""Deterministic, safe undo capability.
 
 Restores configured allowlisted source files from rotating backups using atomic
 replacement and reverse unified diff rendering.

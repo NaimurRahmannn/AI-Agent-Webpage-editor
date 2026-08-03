@@ -1,4 +1,4 @@
-"""Deterministic HTML and CSS syntax validation for Phase 10.
+"""Deterministic HTML and CSS syntax validation.
 
 Uses html5lib for HTML parsing and tinycss2 for CSS parsing. Validates the
 complete resulting source code before backup or atomic write operations.

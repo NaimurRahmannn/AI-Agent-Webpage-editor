@@ -510,7 +510,7 @@ def handle_colon_command(
 
 
 def run_session(settings: Settings) -> None:
-    """Run the long-lived conversational editing session with Phase 10 capabilities."""
+    """Run the long-lived conversational editing session."""
 
     session_state = SessionState(history_limit=settings.session_history_limit)
     clarification_mgr = ClarificationManager()

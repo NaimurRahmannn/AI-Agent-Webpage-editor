@@ -1,4 +1,4 @@
-"""Integration tests for Phase 9 conversational clarification workflow.
+"""Integration tests for the conversational clarification workflow.
 
 All tests mock LLM outputs and subprocess execution. No network, live Groq,
 live Gemini, npm, or browser execution is performed.

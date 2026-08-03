@@ -116,7 +116,7 @@ editor_task:
     3. Preserve the locator's file, selector, and property metadata when
        they are present.
 
-    Reviewer Tool Handling (Phase 8):
+    Reviewer Tool Handling:
 
     If the locator result is "located" and the gemini_cli_review tool is available:
     - Formulate a candidate patch first.

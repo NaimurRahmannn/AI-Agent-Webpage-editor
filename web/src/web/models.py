@@ -171,7 +171,7 @@ class ProposedPatch(StrictModel):
     Structured output produced by the editor agent.
 
     A ready patch contains one exact replacement in one configured file.
-    Python will validate uniqueness and apply the replacement in Phase 3.
+    Python validates uniqueness and applies the replacement before writing.
     """
 
     status: Literal["ready", "ambiguous", "unsupported"]

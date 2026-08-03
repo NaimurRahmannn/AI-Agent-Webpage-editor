@@ -39,13 +39,13 @@ class Settings(BaseSettings):
         "style.css",
     )
 
-    # Reserved for the bounded session memory implemented in Phase 6.
+    # Reserved for bounded session memory.
     session_history_limit: int = Field(default=5, ge=1, le=20)
 
-    # Reserved for rotating backups implemented in Phase 3.
+    # Reserved for rotating backups.
     backup_limit: int = Field(default=3, ge=1, le=10)
 
-    # Phase 8: Embedded Gemini CLI read-only patch reviewer configuration
+    # Embedded Gemini CLI read-only patch reviewer configuration
     gemini_api_key: SecretStr | None = None
     gemini_cli_enabled: bool = False
     gemini_cli_model: str = "flash"
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
         default=20000, ge=100, le=500000
     )
 
-    # Phase 10: Preview mode and syntax validation configuration
+    # Preview mode and syntax validation configuration
     patch_mode: Literal["automatic", "preview"] = "automatic"
     syntax_validation_enabled: bool = True
     html_validation_enabled: bool = True
@@ -179,8 +179,8 @@ def resolve_allowed_paths(settings: Settings) -> Mapping[str, Path]:
     """
     Resolve the configured source files and enforce the project boundary.
 
-    This is a read-time safety check. Phase 3 will repeat stricter checks
-    immediately before every write.
+    This is a read-time safety check. Stricter checks run immediately before
+    every write.
     """
 
     root = settings.project_root.resolve()

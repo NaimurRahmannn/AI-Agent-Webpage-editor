@@ -129,7 +129,7 @@ def build_crew_inputs(
     session_memory: str,
 ) -> dict[str, str]:
     """
-    Build the runtime inputs that Phase 5 will pass to crew.kickoff().
+    Build the runtime inputs passed to crew.kickoff().
 
     This function performs no LLM call and no filesystem write.
     """

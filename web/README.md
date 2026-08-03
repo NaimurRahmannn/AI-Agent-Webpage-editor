@@ -276,7 +276,7 @@ web/
     ├── test_models.py
     ├── test_orchestration.py
     ├── test_patcher.py
-    ├── test_phase10_integration.py
+    ├── test_preview_integration.py
     ├── test_preview.py
     ├── test_reliability.py
     ├── test_session.py
@@ -433,7 +433,7 @@ Run specific test modules:
 
 ```bash
 # Syntax Validation, Preview, and Undo tests
-./scripts/test.sh tests/test_syntax_validator.py tests/test_preview.py tests/test_undo.py tests/test_phase10_integration.py -v
+./scripts/test.sh tests/test_syntax_validator.py tests/test_preview.py tests/test_undo.py tests/test_preview_integration.py -v
 
 # Clarification & Gemini CLI tests
 ./scripts/test.sh tests/test_clarification.py tests/test_gemini_cli_tool.py -v

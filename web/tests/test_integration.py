@@ -1,4 +1,4 @@
-"""Phase 7 – end-to-end mocked integration tests.
+"""End-to-end mocked integration tests.
 
 Every test exercises the complete ``process_turn`` flow with mocked CrewAI
 outputs and the **real** deterministic patcher.  No test calls Groq, accesses
