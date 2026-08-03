@@ -412,6 +412,107 @@ def test_old_text_must_match_locator_exact_source() -> None:
         validate_crew_output(output)
 
 
+def test_ready_patch_target_must_match_locator() -> None:
+    locator = LocatorResult(
+        status="located",
+        file="index.html",
+        target="hero heading",
+        exact_source="<h1>Hello</h1>",
+        message="Located the hero heading.",
+    )
+
+    patch = ProposedPatch(
+        status="ready",
+        file="index.html",
+        old_text="<h1>Hello</h1>",
+        new_text="<h1>Welcome</h1>",
+        target="footer heading",
+        summary="Change the heading.",
+    )
+
+    output = FakeCrewOutput(
+        pydantic=patch,
+        tasks_output=[
+            FakeTaskOutput(locator),
+            FakeTaskOutput(patch),
+        ],
+    )
+
+    with pytest.raises(
+        CrewOutputError,
+        match="target does not match",
+    ):
+        validate_crew_output(output)
+
+
+def test_ready_patch_must_not_add_selector_metadata() -> None:
+    locator = LocatorResult(
+        status="located",
+        file="index.html",
+        target="hero heading",
+        exact_source="<h1>Hello</h1>",
+        message="Located the hero heading.",
+    )
+
+    patch = ProposedPatch(
+        status="ready",
+        file="index.html",
+        old_text="<h1>Hello</h1>",
+        new_text="<h1>Welcome</h1>",
+        target="hero heading",
+        selector="h1",
+        summary="Change the heading.",
+    )
+
+    output = FakeCrewOutput(
+        pydantic=patch,
+        tasks_output=[
+            FakeTaskOutput(locator),
+            FakeTaskOutput(patch),
+        ],
+    )
+
+    with pytest.raises(
+        CrewOutputError,
+        match="selector does not match",
+    ):
+        validate_crew_output(output)
+
+
+def test_ready_patch_must_not_add_property_metadata() -> None:
+    locator = LocatorResult(
+        status="located",
+        file="style.css",
+        target="CTA declaration",
+        exact_source="background: green;",
+        message="Located the CTA declaration.",
+    )
+
+    patch = ProposedPatch(
+        status="ready",
+        file="style.css",
+        old_text="background: green;",
+        new_text="background: darkgreen;",
+        target="CTA declaration",
+        property="background",
+        summary="Darken the CTA.",
+    )
+
+    output = FakeCrewOutput(
+        pydantic=patch,
+        tasks_output=[
+            FakeTaskOutput(locator),
+            FakeTaskOutput(patch),
+        ],
+    )
+
+    with pytest.raises(
+        CrewOutputError,
+        match="property does not match",
+    ):
+        validate_crew_output(output)
+
+
 def test_source_snapshot_change_is_rejected(
     tmp_path,
 ) -> None:

@@ -234,12 +234,17 @@ def _validate_ready_patch_against_locator(
             "editor old_text does not match locator exact_source"
         )
 
-    if locator.selector is not None and patch.selector != locator.selector:
+    if patch.target != locator.target:
+        raise CrewOutputError(
+            "editor target does not match locator target"
+        )
+
+    if patch.selector != locator.selector:
         raise CrewOutputError(
             "editor selector does not match locator selector"
         )
 
-    if locator.property is not None and patch.property != locator.property:
+    if patch.property != locator.property:
         raise CrewOutputError(
             "editor property does not match locator property"
         )

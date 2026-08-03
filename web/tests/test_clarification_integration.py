@@ -172,10 +172,10 @@ def test_clarification_flow_resolution_and_application(
     loc2 = LocatorResult(
         status="located",
         file="index.html",
-        target="CTA link",
+        target="CTA link text",
         selector=".cta",
         exact_source='<a class="cta" href="#contact">Get started now</a>',
-        message="Located CTA link.",
+        message="Located CTA link text.",
     )
     pat2 = ProposedPatch(
         status="ready",

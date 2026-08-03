@@ -252,7 +252,7 @@ web/
 │       └── workspace/         # Target HTML/CSS project files
 │           ├── index.html     # Default allowlisted HTML file
 │           └── style.css      # Default allowlisted CSS file
-└── tests/                     # Test suite (223 unit & integration tests)
+└── tests/                     # Test suite (226 unit & integration tests)
     ├── test_clarification.py
     ├── test_clarification_integration.py
     ├── test_crew.py
@@ -379,7 +379,7 @@ The interactive REPL supports special colon commands executed locally without in
 
 ## Testing
 
-The project includes 223 unit and integration tests. External LLM calls are mocked for deterministic execution.
+The project includes 226 unit and integration tests. External LLM calls are mocked for deterministic execution.
 
 Run the complete test suite:
 

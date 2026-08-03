@@ -156,5 +156,5 @@ git checkout src/web/workspace/
 - [x] **Patch Preview Mode**: `PATCH_MODE=preview` holds pending preview transactions without touching disk until `:apply`.
 - [x] **Safe Undo**: `:undo` restores allowlisted files from rotating backups using atomic replacement and reverse diffs.
 - [x] **Colon Commands**: `:status`, `:preview`, `:apply`, `:cancel`, `:undo` operate cleanly.
-- [x] **Automated Tests**: All 223 automated tests pass.
+- [x] **Automated Tests**: All 226 automated tests pass.
 - [x] **Documentation**: Complete `README.md` and `DEMO.md`.
